@@ -1,0 +1,91 @@
+# Example Nginx reverse proxy for the backend service
+# - Terminates HTTP (add TLS in production with certbot or managed TLS)
+# - Proxies to Daphne/ASGI at backend:8000
+# - Handles WebSocket upgrade for Django Channels
+# - Optionally serves static/media (uncomment and mount volumes)
+
+user  nginx;
+worker_processes  auto;
+
+error_log  /var/log/nginx/error.log warn;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile        on;
+    tcp_nopush      on;
+    tcp_nodelay     on;
+    keepalive_timeout  65;
+    types_hash_max_size 4096;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    upstream backend_upstream {
+        server backend:8000;  # service name from docker compose
+        keepalive 32;
+    }
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        # Security headers (adjust as needed)
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:;";
+
+        # If you want Nginx to serve staticfiles collected at /app/staticfiles
+        # make sure to mount that folder into this container at /static
+        # and uncomment the following location block
+        # location /static/ {
+        #     alias /static/;
+        #     access_log off;
+        #     expires 30d;
+        # }
+
+        # Same for user-uploaded media if mounted at /media
+        # location /media/ {
+        #     alias /media/;
+        #     access_log off;
+        #     expires 30d;
+        # }
+
+        location / {
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # WebSocket support
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+            proxy_pass http://backend_upstream;
+        }
+
+        # Health check (optional)
+        location /nginx-health {
+            access_log off;
+            return 200 'ok';
+            add_header Content-Type text/plain;
+        }
+    }
+}

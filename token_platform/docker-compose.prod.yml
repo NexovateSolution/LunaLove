@@ -1,0 +1,59 @@
+version: "3.9"
+
+# Example production compose. In production, place backend behind a reverse proxy (e.g., Nginx)
+# with TLS termination and configure persistent volumes/backups for Postgres.
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-token_db}
+      POSTGRES_USER: ${POSTGRES_USER:-token_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-token_pass}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    # Alternatively use a prebuilt image:
+    # image: ghcr.io/your-org/token-platform-backend:latest
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    # Expose internally and route via your reverse proxy (Nginx/Traefik)
+    ports:
+      - "8000:8000"
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "tokenplatform.asgi:application"]
+
+  celery:
+    build: ./backend
+    # image: ghcr.io/your-org/token-platform-backend:latest
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - backend
+      - redis
+    restart: unless-stopped
+    command: ["celery", "-A", "tokenplatform.celery", "worker", "-l", "info"]
+
+volumes:
+  db_data:

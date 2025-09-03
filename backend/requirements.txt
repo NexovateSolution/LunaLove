@@ -1,0 +1,18 @@
+django
+djangorestframework
+psycopg2-binary
+django-cors-headers
+requests
+python-dateutil
+geopy
+google-auth
+openai==0.28 # Pin to pre-v1.0 version for API compatibility
+Pillow
+djangorestframework-simplejwt
+geopy
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+requests
+openai
+python-dotenv # For loading .env files

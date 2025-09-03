@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: token_db
+      POSTGRES_USER: token_user
+      POSTGRES_PASSWORD: token_pass
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "8000:8000"
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "tokenplatform.asgi:application"]
+    volumes:
+      - ./backend:/app
+
+  celery:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - backend
+      - redis
+    command: ["celery", "-A", "tokenplatform.celery", "worker", "-l", "info"]
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_PORT=3000
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
+    volumes:
+      - ./frontend:/usr/src/app
+      - frontend_node_modules:/usr/src/app/node_modules
+
+volumes:
+  db_data:
+  frontend_node_modules:
