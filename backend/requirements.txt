@@ -16,3 +16,5 @@ google-auth-oauthlib
 requests
 openai
 python-dotenv # For loading .env files
+django-jazzmin==3.0.1
+cryptography

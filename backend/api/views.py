@@ -17,12 +17,15 @@ import os
 import hmac
 import hashlib
 import logging
+import time
 
 # Imports for Google Auth
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from django.utils.crypto import get_random_string
 import logging
+import base64
+import json
 
 # Create your views here.
 from rest_framework import status, generics, viewsets
@@ -30,14 +33,23 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
-from rest_framework.authtoken.models import Token # Import Token model
 from rest_framework.authtoken.views import ObtainAuthToken # Import ObtainAuthToken
+from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes # Import api_view decorator
 # AllowAny for registration, IsAuthenticated for protected views
 
-from .serializers import UserRegistrationSerializer, UserSerializer, UserPreferenceSerializer, UserPhotoSerializer, InterestSerializer, SwipeSerializer, MatchSerializer, PotentialMatchSerializer
-from .models import User, UserPreference, UserPhoto, Interest, Swipe, Match # Or: from django.contrib.auth import get_user_model
-                         # User = get_user_model()
+from .serializers import (
+    UserRegistrationSerializer, UserSerializer, UserPreferenceSerializer, 
+    UserPhotoSerializer, InterestSerializer, SwipeSerializer, 
+    PotentialMatchSerializer, LikeSerializer, LikeCreateSerializer, 
+    PeopleWhoLikeMeSerializer, ChatbotConversationSerializer, 
+    ChatbotMessageSerializer, ChatMessageSerializer
+)
+from .models import (
+    User, UserPreference, UserPhoto, Interest, Swipe, Like, Match, Message, 
+    ChatbotConversation, ChatbotMessage, ChatMessage
+)
+# User = get_user_model()
 
 # --- Matchmaking Configuration ---
 # Rebalanced weights to include popularity and implicit preferences
@@ -61,17 +73,24 @@ class UserRegistrationView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        token, created = Token.objects.get_or_create(user=user)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from django.db import transaction
+            with transaction.atomic():
+                user = serializer.save()
+                # Ensure a preferences row exists for the new user
+                from .models import UserPreference
+                UserPreference.objects.get_or_create(user=user)
+                token, _ = Token.objects.get_or_create(user=user)
+        except Exception as e:
+            logging.exception("Registration failed")
+            detail = str(e) if settings.DEBUG else "Registration failed due to a server error."
+            return Response({"error": detail}, status=status.HTTP_400_BAD_REQUEST)
+
         user_data = UserSerializer(user, context={'request': request}).data
-        return Response(
-            {
-                'user': user_data,
-                'token': token.key
-            },
-            status=status.HTTP_201_CREATED
-        )
+        return Response({"user": user_data, "token": token.key}, status=status.HTTP_201_CREATED)
 
 
 class CustomLoginView(ObtainAuthToken):
@@ -91,13 +110,17 @@ class CustomLoginView(ObtainAuthToken):
 
         # Determine if the login identifier is an email or a username
         if '@' in login_identifier:
-            try:
-                # Find the user by email to get their actual username
-                user_obj = User.objects.get(email__iexact=login_identifier)
-                username = user_obj.username
-            except User.DoesNotExist:
+            # Resolve by email case-insensitively; handle duplicates by picking most recently active
+            user_obj = (
+                User.objects
+                .filter(email__iexact=login_identifier)
+                .order_by('-last_login', '-date_joined')
+                .first()
+            )
+            if not user_obj:
                 # Prevent user enumeration by returning a generic error
                 return Response({"error": "Invalid Credentials"}, status=status.HTTP_400_BAD_REQUEST)
+            username = user_obj.username
         else:
             username = login_identifier
 
@@ -126,16 +149,128 @@ class GoogleLoginView(APIView):
             return Response({"error": "Google token not provided."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Verify the token with Google
-            logging.info(f"Verifying Google ID token with audience: {settings.GOOGLE_CLIENT_ID}")
-            idinfo = id_token.verify_oauth2_token(id_token_from_request, google_requests.Request(), settings.GOOGLE_CLIENT_ID)
-            email = idinfo['email']
+            logging.info("[GoogleLoginView] Received Google auth request")
+            # Decode the JWT payload first to validate 'aud' early and improve error messages
+            try:
+                parts = id_token_from_request.split('.')
+                payload_segment = parts[1] if len(parts) >= 2 else ''
+                padding = '=' * (-len(payload_segment) % 4)
+                decoded_payload = json.loads(base64.urlsafe_b64decode(payload_segment + padding).decode('utf-8')) if payload_segment else {}
+            except Exception:
+                decoded_payload = {}
+
+            req_aud = decoded_payload.get('aud')
+            server_aud = settings.GOOGLE_CLIENT_ID
+            if server_aud and req_aud and req_aud != server_aud:
+                logging.error(f"[GoogleLoginView] Audience mismatch. token.aud={req_aud} settings.GOOGLE_CLIENT_ID={server_aud}")
+                return Response(
+                    {
+                        "error": "audience_mismatch",
+                        "detail": "Google token audience does not match server client ID.",
+                        "token_aud": req_aud if settings.DEBUG else None,
+                        "server_client_id": server_aud if settings.DEBUG else None,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Verify the token with Google unless bypass is explicitly enabled
+            bypass = os.getenv('GOOGLE_AUTH_BYPASS', '0') in ('1', 'true', 'True')
+            if not bypass:
+                logging.info(f"Verifying Google ID token with audience: {settings.GOOGLE_CLIENT_ID}")
+                try:
+                    # Try with small clock skew allowance (env configurable)
+                    skew = int(os.getenv('GOOGLE_AUTH_CLOCK_SKEW', '10'))
+                    idinfo = id_token.verify_oauth2_token(
+                        id_token_from_request,
+                        google_requests.Request(),
+                        settings.GOOGLE_CLIENT_ID,
+                        clock_skew_in_seconds=skew,
+                    )
+                except TypeError:
+                    # Older google-auth versions don't support clock_skew_in_seconds; fall back
+                    idinfo = id_token.verify_oauth2_token(
+                        id_token_from_request,
+                        google_requests.Request(),
+                        settings.GOOGLE_CLIENT_ID,
+                    )
+                except ValueError as e:
+                    # Handle 'Token used too early' due to small clock skew by retrying once
+                    if 'used too early' in str(e).lower():
+                        logging.warning("Google ID token used too early; retrying verification after brief delay")
+                        time.sleep(3)
+                        try:
+                            skew = int(os.getenv('GOOGLE_AUTH_CLOCK_SKEW', '10'))
+                            idinfo = id_token.verify_oauth2_token(
+                                id_token_from_request,
+                                google_requests.Request(),
+                                settings.GOOGLE_CLIENT_ID,
+                                clock_skew_in_seconds=skew,
+                            )
+                        except TypeError:
+                            idinfo = id_token.verify_oauth2_token(
+                                id_token_from_request,
+                                google_requests.Request(),
+                                settings.GOOGLE_CLIENT_ID,
+                            )
+                    else:
+                        raise
+            else:
+                # Dev bypass: decode JWT payload without verification
+                logging.warning("GOOGLE_AUTH_BYPASS enabled: decoding ID token without verification (dev only)")
+                try:
+                    parts = id_token_from_request.split('.')
+                    if len(parts) < 2:
+                        raise ValueError("Malformed ID token")
+                    payload_segment = parts[1]
+                    # Add missing padding for base64url
+                    padding = '=' * (-len(payload_segment) % 4)
+                    payload_json = base64.urlsafe_b64decode(payload_segment + padding).decode('utf-8')
+                    idinfo = json.loads(payload_json)
+                    # If email missing, synthesize one
+                    if not idinfo.get('email'):
+                        rid = get_random_string(8)
+                        idinfo['email'] = f"dev_{rid}@example.com"
+                except Exception as e:
+                    # Final fallback to a synthesized identity
+                    rid = get_random_string(8)
+                    idinfo = {
+                        'email': f"dev_{rid}@example.com",
+                        'given_name': 'Dev',
+                        'family_name': 'User',
+                    }
+            # Additional claims validation
+            iss = idinfo.get('iss', '')
+            if iss and (iss != 'accounts.google.com' and not iss.startswith('https://accounts.google.com')):
+                return Response({
+                    "error": "invalid_issuer",
+                    "detail": "Token issuer is not Google.",
+                    "iss": iss if settings.DEBUG else None,
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            email = idinfo.get('email')
+            if not email:
+                return Response({
+                    "error": "missing_email",
+                    "detail": "Google token did not include an email claim.",
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if idinfo.get('email_verified') is False:
+                return Response({
+                    "error": "email_not_verified",
+                    "detail": "Email address is not verified by Google.",
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             first_name = idinfo.get('given_name', '')
             last_name = idinfo.get('family_name', '')
 
-            # Check if user already exists
-            try:
-                user = User.objects.get(email=email)
+            # Check if user already exists (handle duplicates deterministically)
+            user = (
+                User.objects
+                .filter(email__iexact=email)
+                .order_by('-last_login', '-date_joined')
+                .first()
+            )
+            if user is not None:
                 # Existing user found, log them in.
                 token_obj, created = Token.objects.get_or_create(user=user)
                 # FIX: Pass context to serializer to build absolute photo URLs
@@ -145,8 +280,7 @@ class GoogleLoginView(APIView):
                     "token": token_obj.key,
                     "message": "User logged in successfully."
                 }, status=status.HTTP_200_OK)
-
-            except User.DoesNotExist:
+            else:
                 # New user, create an account.
                 # Generate a temporary, unique username.
                 base_name = first_name.lower() if first_name else email.split('@')[0]
@@ -186,6 +320,58 @@ class GoogleLoginView(APIView):
             if settings.DEBUG:
                 return Response({"error": f"Invalid Google token: {e}"}, status=status.HTTP_401_UNAUTHORIZED)
             return Response({"error": "Invalid Google token."}, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception as e:
+            # Catch-all for upstream/network errors (e.g., cert fetch failed)
+            logging.exception("Unexpected error during Google ID token verification")
+            detail = str(e)
+            msg = {
+                "error": "provider_unavailable",
+                "detail": (f"Google auth verification failed: {detail}" if settings.DEBUG else "Upstream auth provider unavailable. Please try again."),
+            }
+            # Prefer 502 for upstream network problems; 500 if unknown
+            return Response(msg, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class DevLoginView(APIView):
+    """Create or fetch a development user and return token. Dev-only."""
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        # Only allow in dev/test bypass modes
+        allowed = (
+            getattr(settings, 'DEBUG', False)
+            or os.getenv('GOOGLE_AUTH_BYPASS', '0') in ('1', 'true', 'True')
+            or os.getenv('PAYMENTS_BYPASS', '0') in ('1', 'true', 'True')
+        )
+        if not allowed:
+            return Response({"error": "Not allowed"}, status=status.HTTP_403_FORBIDDEN)
+
+        email = request.data.get('email') or f"dev_{get_random_string(8)}@example.com"
+        first_name = request.data.get('first_name') or 'Dev'
+        last_name = request.data.get('last_name') or 'User'
+
+        user = (
+            User.objects.filter(email__iexact=email).order_by('-last_login', '-date_joined').first()
+        )
+        if not user:
+            base_name = first_name.lower() if first_name else email.split('@')[0]
+            base_name = ''.join(filter(str.isalnum, base_name)) or 'devuser'
+            username = f"{base_name}_{get_random_string(4)}"
+            while User.objects.filter(username=username).exists():
+                username = f"{base_name}_{get_random_string(4)}"
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                password=get_random_string(12),
+            )
+            UserPreference.objects.get_or_create(user=user)
+
+        token, _ = Token.objects.get_or_create(user=user)
+        user.update_profile_completeness_score()
+        data = UserSerializer(user, context={'request': request}).data
+        return Response({"token": token.key, "user": data}, status=status.HTTP_200_OK)
 
 class CurrentUserView(generics.RetrieveUpdateAPIView):
     authentication_classes = [TokenAuthentication]
@@ -200,6 +386,11 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
         # Explicitly update the score before sending the user data.
         # This ensures our temporary fix in models.py is always applied.
         instance.update_profile_completeness_score()
+        # Enforce perk expiry at read time so frontend always sees up-to-date flags
+        try:
+            instance.enforce_perk_expiry(save=True)
+        except Exception:
+            pass
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
@@ -209,6 +400,16 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
         user = serializer.instance # Get the updated user instance
         user.update_profile_completeness_score() # Recalculate and save the score
         # The serializer will now pick up the updated score for the response
+
+    def delete(self, request, *args, **kwargs):
+        """Allow the authenticated user to delete their own account."""
+        user = self.get_object()
+        user_id = str(user.id)
+        try:
+            user.delete()
+            return Response({"detail": f"User {user_id} deleted."}, status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CityListView(APIView):
@@ -319,7 +520,7 @@ class SwipeCreateView(generics.CreateAPIView):
                 
                 if created:
                     # Return the new match data
-                    match_serializer = MatchSerializer(match, context={'request': request})
+                    match_serializer = LikeSerializer(match, context={'request': request})
                     return Response({'match': True, 'is_new_match': True, 'data': match_serializer.data}, status=status.HTTP_201_CREATED)
                 else:
                     # A match already existed
@@ -384,8 +585,13 @@ class PotentialMatchView(generics.ListAPIView):
         if gender and gender.lower() != 'all':
             potential_matches_qs = potential_matches_qs.filter(gender__iexact=gender)
 
-        # --- 4. Final Step: Order randomly ---
-        return potential_matches_qs.order_by('?')
+        # --- 4. Final Step: Prioritize boosted users, then random ---
+        boost_score = Case(
+            When(has_boost=True, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField(),
+        )
+        return potential_matches_qs.annotate(boost_score=boost_score).order_by('-boost_score', '?')
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
@@ -612,11 +818,11 @@ def check_match(request, profile_id):
 
         if created:
             # A new match was created
-            serializer = MatchSerializer(match, context={'request': request})
+            serializer = LikeSerializer(match, context={'request': request})
             return Response({'match': True, 'is_new_match': True, 'data': serializer.data}, status=status.HTTP_201_CREATED)
         else:
             # A match already existed
-            serializer = MatchSerializer(match, context={'request': request})
+            serializer = LikeSerializer(match, context={'request': request})
             return Response({'match': True, 'is_new_match': False, 'data': serializer.data}, status=status.HTTP_200_OK)
 
     return Response({'match': False}, status=status.HTTP_200_OK)
@@ -671,7 +877,7 @@ class MatchListView(generics.ListAPIView):
     """
     Lists all active matches for the authenticated user.
     """
-    serializer_class = MatchSerializer
+    serializer_class = LikeSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [TokenAuthentication]
 
@@ -698,7 +904,7 @@ class VerifyPaymentView(APIView):
             user = User.objects.get(pk=request.user.pk)
         except User.DoesNotExist:
             # This is a fallback, should not happen for an authenticated user.
-            return Response({'status': 'error', 'message': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'status': 'error', 'message': 'No verification parameters provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # If already premium, return success immediately
         if user.is_premium:
@@ -744,3 +950,511 @@ class VerifyPaymentView(APIView):
 
         # No tx_ref provided and user not yet premium -> allow frontend to retry while waiting for webhook
         return Response({'status': 'pending', 'message': 'Premium status not yet active.'}, status=status.HTTP_202_ACCEPTED)
+
+
+# ---------------- Subscriptions (Plans + Subscribe) ----------------
+class SubscriptionPlansView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        plans = [
+            {
+                'id': 1,
+                'code': 'BOOST',
+                'name': 'Boost Plan',
+                'description': 'Get featured more and reach more profiles for better matching!',
+                'price_etb': '199.00',
+                'icon': '🔥',
+            },
+            {
+                'id': 2,
+                'code': 'LIKES_REVEAL',
+                'name': 'Likes Reveal Plan',
+                'description': 'See who liked you and decide if you like them back!',
+                'price_etb': '149.00',
+                'icon': '❤️',
+            },
+            {
+                'id': 3,
+                'code': 'AD_FREE',
+                'name': 'Ad-Free Plan',
+                'description': 'Remove ads that appear every 5–10 swipes and enjoy smooth swiping!',
+                'price_etb': '99.00',
+                'icon': '🚫📢',
+            },
+        ]
+        return Response(plans, status=status.HTTP_200_OK)
+
+
+class SubscribePlanView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            plan_id = int(request.data.get('plan_id'))
+        except (TypeError, ValueError):
+            return Response({'detail': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Basic validation for demo plans
+        if plan_id not in {1, 2, 3}:
+            return Response({'detail': 'Invalid plan_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Build a stubbed checkout URL redirecting back to the frontend
+        base = getattr(settings, 'FRONTEND_URL', os.environ.get('FRONTEND_URL', 'http://localhost:5173'))
+        reference = f"sub-{plan_id}-{request.user.id}-{uuid.uuid4().hex[:8]}"
+        checkout_url = f"{base}/purchase-success/?status=success&reference={reference}&plan_id={plan_id}"
+        return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
+
+
+class SubscriptionActivateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            plan_id = int(request.data.get('plan_id'))
+        except (TypeError, ValueError):
+            return Response({'detail': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        now = timezone.now()
+        expires = now + timedelta(days=30)
+
+        if plan_id == 1:  # Boost
+            user.has_boost = True
+            user.boost_expiry = expires
+        elif plan_id == 2:  # Likes Reveal
+            user.can_see_likes = True
+            user.likes_reveal_expiry = expires
+        elif plan_id == 3:  # Ad-Free
+            user.ad_free = True
+            user.ad_free_expiry = expires
+        else:
+            return Response({'detail': 'Invalid plan_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.save(update_fields=['has_boost', 'can_see_likes', 'ad_free', 'boost_expiry', 'likes_reveal_expiry', 'ad_free_expiry', 'updated_at'])
+        data = UserSerializer(user, context={'request': request}).data
+        return Response({'ok': True, 'user': data, 'expires_at': expires.isoformat()}, status=status.HTTP_200_OK)
+
+
+# ===== NEW ENHANCED MATCHING SYSTEM VIEWS =====
+
+class LikeUserView(APIView):
+    """Create a like for another user"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request, *args, **kwargs):
+        serializer = LikeCreateSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            like = serializer.save()
+            # Check for mutual match
+            logging.info(f"Calling check_for_mutual_match for like: {like.id}")
+            match = like.check_for_mutual_match()
+            logging.info(f"Mutual match result: {match}")
+            
+            response_data = {
+                'like_id': like.id,
+                'status': like.status,
+                'mutual_match': match is not None
+            }
+            
+            logging.info(f"Response data: {response_data}")
+            
+            if match:
+                response_data['match_data'] = LikeSerializer(match, context={'request': request}).data
+                
+                # Send real-time notifications to both users (disabled for now)
+                # from .websocket_utils import send_match_notification
+                # from .serializers import UserSerializer
+                
+                # match_data = LikeSerializer(match, context={'request': request}).data
+                # user1_data = UserSerializer(like.liker, context={'request': request}).data
+                # user2_data = UserSerializer(like.liked, context={'request': request}).data
+                
+                # Notify both users about the match
+                # send_match_notification(like.liker.id, {
+                #     'id': str(match.id),
+                #     'other_user': user2_data,
+                #     'matched_at': match.matched_at.isoformat()
+                # })
+                # send_match_notification(like.liked.id, {
+                #     'id': str(match.id),
+                #     'other_user': user1_data,
+                #     'matched_at': match.matched_at.isoformat()
+                # })
+                
+                logging.info(f"Mutual match created between {like.liker.first_name} and {like.liked.first_name}")
+                
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            logging.error(f"Error in LikeUserView: {str(e)}")
+            logging.error(f"Traceback: {traceback.format_exc()}")
+            
+            if 'UNIQUE constraint failed' in str(e) or 'duplicate key' in str(e):
+                return Response({'error': 'You have already liked this user'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': f'Failed to create like: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class PeopleILikeView(generics.ListAPIView):
+    """List of people the current user has liked"""
+    serializer_class = LikeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        return Like.objects.filter(
+            liker=self.request.user,
+            status__in=[Like.LikeStatus.LIKED, Like.LikeStatus.MATCHED]
+        ).select_related('liked').prefetch_related('liked__photos')
+
+
+class PeopleWhoLikeMeView(generics.ListAPIView):
+    """List of people who liked the current user - with subscription gating"""
+    serializer_class = PeopleWhoLikeMeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        return Like.objects.filter(
+            liked=self.request.user,
+            status__in=[Like.LikeStatus.LIKED, Like.LikeStatus.MATCHED]
+        ).select_related('liker').prefetch_related('liker__photos')
+    
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        
+        # Add subscription upsell info for non-subscribers
+        response_data = {
+            'count': queryset.count(),
+            'has_subscription': request.user.can_see_likes,
+            'results': []
+        }
+        
+        if not request.user.can_see_likes and queryset.count() > 0:
+            response_data['upsell_message'] = f"You have {queryset.count()} people who liked you! Subscribe to see who they are."
+        
+        serializer = self.get_serializer(queryset, many=True)
+        response_data['results'] = serializer.data
+        
+        return Response(response_data)
+
+
+class MyMatchesView(generics.ListAPIView):
+    """List of mutual matches for the current user"""
+    serializer_class = LikeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        user = self.request.user
+        return Like.objects.filter(
+            Q(liker=user) | Q(liked=user),
+            status=Like.LikeStatus.MATCHED
+        ).select_related('liker', 'liked').prefetch_related(
+            'liker__photos', 'liked__photos'
+        ).order_by('-updated_at')
+
+
+class RemoveLikeView(APIView):
+    """Remove/undo a like"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request, *args, **kwargs):
+        like_id = request.data.get('like_id')
+        if not like_id:
+            return Response({'error': 'like_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            like = Like.objects.get(
+                id=like_id,
+                liker=request.user,
+                status__in=[Like.LikeStatus.LIKED, Like.LikeStatus.MATCHED]
+            )
+            
+            # If it was a match, we need to handle the match removal
+            if like.status == Like.LikeStatus.MATCHED:
+                # Find and deactivate the match
+                user1, user2 = sorted([like.liker, like.liked], key=lambda u: str(u.id))
+                try:
+                    match = Match.objects.get(user1=user1, user2=user2)
+                    match.is_active = False
+                    match.save()
+                    
+                    # Update the other user's like back to LIKED status
+                    other_like = Like.objects.get(liker=like.liked, liked=like.liker)
+                    other_like.status = Like.LikeStatus.LIKED
+                    other_like.save()
+                except Match.DoesNotExist:
+                    pass
+            
+            like.status = Like.LikeStatus.REMOVED
+            like.save()
+            
+            return Response({'success': True, 'message': 'Like removed successfully'})
+            
+        except Like.DoesNotExist:
+            return Response({'error': 'Like not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MatchDetailView(generics.RetrieveAPIView):
+    """Get details of a specific match"""
+    serializer_class = LikeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        user = self.request.user
+        return Match.objects.filter(
+            Q(user1=user) | Q(user2=user),
+            is_active=True
+        ).select_related('user1', 'user2').prefetch_related(
+            'user1__photos', 'user2__photos'
+        )
+
+
+class SendMessageView(APIView):
+    """Send a message in a match"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request, match_id, *args, **kwargs):
+        try:
+            user = request.user
+            # The match_id is actually a like_id in our system
+            like = Like.objects.get(
+                id=match_id,
+                status=Like.LikeStatus.MATCHED
+            )
+            
+            # Verify user is part of this match
+            if user not in [like.liker, like.liked]:
+                return Response({'error': 'You are not part of this match'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get the corresponding Match object
+            user1, user2 = sorted([like.liker, like.liked], key=lambda u: str(u.id))
+            match = Match.objects.get(user1=user1, user2=user2)
+            
+            content = request.data.get('content', '').strip()
+            if not content:
+                return Response({'error': 'Message content is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create message
+            from .models import Message
+            message = Message.objects.create(
+                match=match,
+                sender=user,
+                content=content
+            )
+            
+            # Update match last interaction
+            match.last_interaction_at = timezone.now()
+            match.save(update_fields=['last_interaction_at'])
+            
+            # Send real-time notification to the other user (disabled for now)
+            # from .websocket_utils import send_message_notification
+            # other_user = match.get_other_user(user)
+            
+            # send_message_notification(
+            #     other_user.id,
+            #     match.id,
+            #     {
+            #         'id': message.id,
+            #         'content': message.content,
+            #         'sent_at': message.sent_at.isoformat()
+            #     },
+            #     {
+            #         'id': str(user.id),
+            #         'name': user.first_name,
+            #         'avatar': user.photos.first().photo.url if user.photos.exists() else None
+            #     }
+            # )
+            
+            return Response({
+                'id': message.id,
+                'content': message.content,
+                'sender_id': str(user.id),
+                'sent_at': message.sent_at.isoformat(),
+                'match_id': str(match.id)
+            }, status=status.HTTP_201_CREATED)
+            
+        except Match.DoesNotExist:
+            return Response({'error': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MatchMessagesView(generics.ListAPIView):
+    """Get messages for a specific match"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_serializer_class(self):
+        from .serializers import MessageSerializer
+        return MessageSerializer
+    
+    def get_queryset(self):
+        match_id = self.kwargs['match_id']  # This is actually a like_id
+        user = self.request.user
+        
+        try:
+            # Get the Like object first
+            like = Like.objects.get(
+                id=match_id,
+                status=Like.LikeStatus.MATCHED
+            )
+            
+            # Verify user is part of this match
+            if user not in [like.liker, like.liked]:
+                return []
+            
+            # Get the corresponding Match object
+            user1, user2 = sorted([like.liker, like.liked], key=lambda u: str(u.id))
+            match = Match.objects.get(user1=user1, user2=user2)
+            
+            from .models import Message
+            return Message.objects.filter(match=match).select_related('sender').order_by('sent_at')
+            
+        except (Match.DoesNotExist, Like.DoesNotExist):
+            return []
+
+
+class ChatMessagesView(generics.ListCreateAPIView):
+    """API view for chat messages between matched users"""
+    serializer_class = ChatMessageSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        match_id = self.kwargs.get('match_id')
+        try:
+            # Verify the match exists and user is part of it
+            match = Like.objects.get(
+                id=match_id,
+                status=Like.LikeStatus.MATCHED
+            )
+            
+            # Ensure current user is part of this match
+            if self.request.user not in [match.liker, match.liked]:
+                return ChatMessage.objects.none()
+                
+            return ChatMessage.objects.filter(match=match).select_related('sender')
+            
+        except Like.DoesNotExist:
+            return ChatMessage.objects.none()
+    
+    def perform_create(self, serializer):
+        match_id = self.kwargs.get('match_id')
+        try:
+            match = Like.objects.get(
+                id=match_id,
+                status=Like.LikeStatus.MATCHED
+            )
+            
+            # Ensure current user is part of this match
+            if self.request.user not in [match.liker, match.liked]:
+                raise serializers.ValidationError("You are not part of this match")
+                
+            serializer.save(sender=self.request.user, match=match)
+            
+        except Like.DoesNotExist:
+            raise serializers.ValidationError("Match not found")
+
+
+class MatchDetailView(generics.RetrieveAPIView):
+    """API view to get match details for chat"""
+    serializer_class = LikeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        return Like.objects.filter(
+            status=Like.LikeStatus.MATCHED
+        ).select_related('liker', 'liked')
+    
+    def get_object(self):
+        match_id = self.kwargs.get('match_id')
+        try:
+            match = self.get_queryset().get(id=match_id)
+            
+            # Ensure current user is part of this match
+            if self.request.user not in [match.liker, match.liked]:
+                raise Http404("Match not found")
+                
+            return match
+            
+        except Like.DoesNotExist:
+            raise Http404("Match not found")
+
+
+class CreateFakeLikeView(APIView):
+    """Create a fake like for testing mutual matches - Dev only"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        if not settings.DEBUG:
+            return Response({'error': 'Only available in debug mode'}, status=status.HTTP_403_FORBIDDEN)
+            
+        liker_id = request.data.get('liker_id')
+        liked_id = request.data.get('liked_id')
+        
+        if not liker_id or not liked_id:
+            return Response({'error': 'liker_id and liked_id required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            liker = User.objects.get(id=liker_id)
+            liked = User.objects.get(id=liked_id)
+            
+            # Create or update the like
+            like, created = Like.objects.get_or_create(
+                liker=liker,
+                liked=liked,
+                defaults={'status': Like.LikeStatus.LIKED}
+            )
+            
+            if not created and like.status != Like.LikeStatus.LIKED:
+                like.status = Like.LikeStatus.LIKED
+                like.save()
+                
+            return Response({
+                'success': True,
+                'like_id': like.id,
+                'created': created,
+                'message': f'{liker.first_name} now likes {liked.first_name}'
+            })
+            
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ClearLikesView(APIView):
+    """Clear all likes for testing - Dev only"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        if not settings.DEBUG:
+            return Response({'error': 'Only available in debug mode'}, status=status.HTTP_403_FORBIDDEN)
+            
+        user = request.user
+        
+        # Delete all likes involving this user
+        likes_deleted = Like.objects.filter(
+            Q(liker=user) | Q(liked=user)
+        ).delete()
+        
+        # Delete all matches involving this user
+        matches_deleted = Match.objects.filter(
+            Q(user1=user) | Q(user2=user)
+        ).delete()
+        
+        return Response({
+            'success': True,
+            'likes_deleted': likes_deleted[0] if likes_deleted[0] else 0,
+            'matches_deleted': matches_deleted[0] if matches_deleted[0] else 0,
+            'message': f'Cleared {likes_deleted[0]} likes and {matches_deleted[0]} matches for {user.first_name}'
+        })

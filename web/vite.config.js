@@ -8,9 +8,9 @@ export default defineConfig({
     proxy: {
       // Proxy /api requests to your Django backend
       '/api': {
-        target: 'http://localhost:8000', // Your Django backend URL
+        target: 'http://localhost:8000', // Django backend runs on 8000 by default
         changeOrigin: true, // Recommended for virtual hosted sites
-        // secure: false, // Uncomment if your backend is not HTTPS (for dev)
+        secure: false, // Backend is not HTTPS in dev
         // rewrite: (path) => path.replace(/^\/api/, ''), // Use if your backend doesn't expect /api prefix
       },
     },

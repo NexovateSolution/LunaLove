@@ -29,6 +29,9 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'dev-insecure-key-change-me')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', '1') == '1'
 
+# Toggle Jazzmin (modern admin UI)
+ENABLE_JAZZMIN = os.getenv('ENABLE_JAZZMIN', '0') in ('1', 'true', 'True')
+
 # Toggle to use PostgreSQL; when false, falls back to SQLite for local dev
 USE_POSTGRES = os.getenv('USE_POSTGRES', '0') in ('1', 'true', 'True')
 
@@ -44,15 +47,45 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'channels',
     'django.contrib.staticfiles',
 
     'rest_framework',        # Add DRF
-'rest_framework.authtoken',  # Add this for token auth
+    'rest_framework.authtoken',  # Add this for token auth
     'corsheaders',           # Add CORS headers
 
     'api.apps.ApiConfig',    # Your app
+    'payments.apps.PaymentsConfig',  # Tokenization/payments app
     # ... other apps
 ]
+
+# Conditionally enable Jazzmin admin theme
+if ENABLE_JAZZMIN:
+    try:
+        import jazzmin  # noqa: F401
+        INSTALLED_APPS = ['jazzmin'] + INSTALLED_APPS  # jazzmin must come before django.contrib.admin
+
+        JAZZMIN_SETTINGS = {
+            "site_title": "Shebalove Admin",
+            "site_header": "Shebalove Admin",
+            "welcome_sign": "Welcome to Shebalove",
+            "show_ui_builder": True,
+            "icons": {
+                "auth.Group": "fas fa-users-cog",
+                "api.User": "fas fa-user",
+            },
+        }
+
+        JAZZMIN_UI_TWEAKS = {
+            "theme": "darkly",
+            "navbar": "navbar-dark",
+            "no_navbar_border": True,
+            "sidebar": "sidebar-dark-primary",
+            "actions_sticky_top": True,
+        }
+    except Exception:
+        # If jazzmin isn't installed or fails to import, just skip it.
+        pass
 
 if USE_POSTGRES:
     INSTALLED_APPS.append('django.contrib.postgres')
@@ -184,16 +217,28 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # CORS Settings (add at the bottom of settings.py)
 
 CORS_ALLOW_ALL_ORIGINS = True # For development only!
+CORS_ALLOW_CREDENTIALS = True
 
-# Or, for more control in production:
-# CORS_ALLOWED_ORIGINS = [
-#     "http://localhost:3000", # Your React frontend development server
-#     "http://127.0.0.1:3000",
-#     "https://your-production-frontend-domain.com",
-# ]
+# Specific origins for better security in production:
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173", # Vite dev server
+    "http://127.0.0.1:5173",
+    "http://localhost:3000", # React dev server fallback
+    "http://127.0.0.1:3000",
+]
 
-# You can also use CORS_ALLOW_CREDENTIALS = True if you need to send cookies/auth headers
-# CORS_ALLOW_CREDENTIALS = True
+# Allow specific headers for Google Auth
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # --- Google OAuth2 Client ID ---
 # In production, it's highly recommended to load this from an environment variable
@@ -216,4 +261,67 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    # Enable throttling for specific endpoints/scopes
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        # Global defaults to satisfy DRF whenever a view uses UserRateThrottle
+        'user': os.getenv('DRF_USER_RATE', '100/min'),
+        'anon': os.getenv('DRF_ANON_RATE', '50/min'),
+        'gifts_send': os.getenv('GIFTS_SEND_RATE', '10/min'),
+    },
+}
+
+# --- Payments/Business Settings ---
+# Defaults aligned with token_platform for seamless porting
+VAT_RATE = os.getenv('VAT_RATE', '0.15')
+PLATFORM_COMMISSION_RATE = os.getenv('PLATFORM_COMMISSION_RATE', '0.25')
+GATEWAY_RATE = os.getenv('GATEWAY_RATE', '0.03')
+GATEWAY_FIXED = os.getenv('GATEWAY_FIXED', '2.00')
+COINS_PER_ETB = int(os.getenv('COINS_PER_ETB', '1'))
+
+# --- Dev/Test toggles ---
+# When true, payment-requiring actions (topups, gift sending balance checks) will bypass
+# real payment validations and assume success to simplify end-to-end testing.
+PAYMENTS_BYPASS = os.getenv('PAYMENTS_BYPASS', '0') in ('1', 'true', 'True')
+
+# Optionally auto-import gifts from an external token_platform SQLite DB if present.
+# Provide a full path in TOKEN_PLATFORM_DB_PATH. When enabled, the backend will
+# opportunistically upsert gifts from that DB during gift listing.
+AUTO_IMPORT_TOKEN_GIFTS = os.getenv('AUTO_IMPORT_TOKEN_GIFTS', '0') in ('1', 'true', 'True')
+TOKEN_PLATFORM_DB_PATH = os.getenv('TOKEN_PLATFORM_DB_PATH', '')
+
+# Provider secrets
+CHAPA_SECRET = os.getenv('CHAPA_SECRET', os.getenv('CHAPA_SECRET_KEY', ''))
+CHAPA_PUBLIC = os.getenv('CHAPA_PUBLIC', '')
+TELEBIRR_API_KEY = os.getenv('TELEBIRR_API_KEY', '')
+
+# Frontend URL for building checkout links
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+# Withdrawal thresholds
+MIN_WITHDRAWAL_ETB = os.getenv('MIN_WITHDRAWAL_ETB', '500')
+MAX_DAILY_WITHDRAWAL_ETB = os.getenv('MAX_DAILY_WITHDRAWAL_ETB', '5000')
+MAX_MONTHLY_WITHDRAWAL_ETB = os.getenv('MAX_MONTHLY_WITHDRAWAL_ETB', '50000')
+
+# KYC encryption key (base64 urlsafe 32-byte key for Fernet)
+KYC_ENCRYPTION_KEY = os.getenv('KYC_ENCRYPTION_KEY', '')
+
+# Risk thresholds
+RISK_TOPUPS_WINDOW_MIN = int(os.getenv('RISK_TOPUPS_WINDOW_MIN', '60'))
+RISK_TOPUPS_COUNT = int(os.getenv('RISK_TOPUPS_COUNT', '5'))
+RISK_GIFTS_ETB_WINDOW_MIN = int(os.getenv('RISK_GIFTS_ETB_WINDOW_MIN', '60'))
+RISK_GIFTS_ETB_THRESHOLD = float(os.getenv('RISK_GIFTS_ETB_THRESHOLD', '10000'))
+RISK_WITHDRAWALS_SAME_DEST_THRESHOLD = int(os.getenv('RISK_WITHDRAWALS_SAME_DEST_THRESHOLD', '3'))
+
+# Channels Configuration
+ASGI_APPLICATION = 'shebalove_project.asgi.application'
+
+# Channel Layers (Redis for production, in-memory for development)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
 }

@@ -50,14 +50,15 @@ export const availableInterests = [
   
   
   export const relationshipIntentOptions = [
-    { value: "", label: "Any" }, // For filters
-    { value: "Long-term relationship", label: "💖 Long-term relationship" },
-    { value: "Short-term relationship", label: "🎉 Short-term fun" }, 
-    { value: "Friendship", label: "👋 New friends" }, 
-    { value: "Casual dating", label: "🥂 Casual dating" },
-    { value: "Figuring it out", label: "🤔 Figuring it out" }, 
-    { value: "Prefer not to say", label: "🤫 Prefer not to say" }
-  ];
+  { value: "", label: "Any" }, // For filters
+  { value: "Long-term relationship", label: "💖 Long-term relationship" },
+  { value: "Short-term relationship", label: "🎉 Short-term fun" }, 
+  { value: "Friendship", label: "👋 New friends" }, 
+  { value: "Casual dating", label: "🥂 Casual dating" },
+  // Backend expects "I'm not sure yet"; keep label for UX but send valid value
+  { value: "I'm not sure yet", label: "🤔 Figuring it out" }, 
+  { value: "Prefer not to say", label: "🤫 Prefer not to say" }
+];
   
   export const drinkingHabitOptions = [
     { value: "Socially", label: "🍻 Socially" },

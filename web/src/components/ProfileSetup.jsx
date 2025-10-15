@@ -86,53 +86,115 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
   const fileRef = useRef();
   const cityCache = useRef({});
 
-  const commonInputClass = "w-full p-2.5 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-300 dark:border-gray-600 focus:border-primary focus:outline-none transition";
+  const commonInputClass = "w-full p-3 bg-gray-50 dark:bg-slate-700 rounded-xl border border-gray-200 dark:border-slate-600 focus:border-purple-500 dark:focus:border-purple-400 focus:outline-none transition-all duration-200 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400";
+
+  // Detect dark mode for react-select styling
+  const [isDarkTheme, setIsDarkTheme] = useState(() => {
+    if (typeof document !== 'undefined') {
+      return document.documentElement.classList.contains('dark');
+    }
+    return false;
+  });
+  useEffect(() => {
+    const updateTheme = () => setIsDarkTheme(document.documentElement.classList.contains('dark'));
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    updateTheme();
+    return () => observer.disconnect();
+  }, []);
 
   const countryOptions = useMemo(() => countryList().getData(), []);
 
-  // Define basic select styles to fix the undefined selectStyles reference
+  // React-select styles for both light/dark themes
   const selectStyles = {
-    control: (provided) => ({
+    control: (provided, state) => ({
       ...provided,
-      borderColor: '#d1d5db',
-      borderRadius: '0.5rem',
-      minHeight: '42px',
-      backgroundColor: 'var(--input-bg)',
-      color: 'var(--text-color)',
-      boxShadow: 'none',
-      '&:hover': {
-        borderColor: '#9333ea' // primary color hover
-      }
+      borderColor: state.isFocused 
+        ? (isDarkTheme ? '#a855f7' : '#8b5cf6') 
+        : (isDarkTheme ? '#475569' : '#e2e8f0'),
+      backgroundColor: isDarkTheme ? '#334155' : '#f8fafc',
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+      borderRadius: '0.75rem',
+      minHeight: '48px',
+      padding: '0 0.5rem',
+      boxShadow: state.isFocused ? '0 0 0 3px rgba(168, 85, 247, 0.1)' : 'none',
+      '&:hover': { 
+        borderColor: isDarkTheme ? '#8b5cf6' : '#a855f7',
+      },
+      transition: 'all 0.2s ease',
     }),
     menu: (provided) => ({
       ...provided,
-      backgroundColor: 'var(--input-bg)',
-      zIndex: 9999, // Ensure dropdown appears above other elements
-      borderRadius: '0.5rem',
-      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-      maxMenuHeight: 220, // Make the dropdown scrollable
+      backgroundColor: isDarkTheme ? '#1e293b' : '#ffffff',
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+      zIndex: 9999,
+      borderRadius: '0.75rem',
+      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+      border: `1px solid ${isDarkTheme ? '#475569' : '#e2e8f0'}`,
+      overflow: 'hidden',
+    }),
+    menuList: (provided) => ({
+      ...provided,
+      backgroundColor: isDarkTheme ? '#1e293b' : '#ffffff',
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+      padding: '0.5rem',
     }),
     option: (provided, state) => ({
       ...provided,
-      backgroundColor: state.isFocused ? 'rgba(147, 51, 234, 0.1)' : 'var(--input-bg)',
-      color: 'var(--text-color)',
+      backgroundColor: state.isFocused
+        ? (isDarkTheme ? 'rgba(168, 85, 247, 0.2)' : 'rgba(168, 85, 247, 0.1)')
+        : 'transparent',
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
       cursor: 'pointer',
-      ':active': {
-        backgroundColor: 'rgba(147, 51, 234, 0.2)'
-      }
-    }),
-    input: (provided) => ({
-      ...provided,
-      color: 'var(--text-color)'
-    }),
-    placeholder: (provided) => ({
-      ...provided,
-      color: '#9ca3af'
+      borderRadius: '0.5rem',
+      margin: '0.125rem 0',
+      padding: '0.75rem 1rem',
+      ':active': { 
+        backgroundColor: isDarkTheme ? 'rgba(168, 85, 247, 0.3)' : 'rgba(168, 85, 247, 0.2)' 
+      },
+      transition: 'all 0.15s ease',
     }),
     singleValue: (provided) => ({
       ...provided,
-      color: 'var(--text-color)'
-    })
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+    }),
+    input: (provided) => ({
+      ...provided,
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+    }),
+    placeholder: (provided) => ({
+      ...provided,
+      color: isDarkTheme ? '#94a3b8' : '#64748b',
+    }),
+    dropdownIndicator: (provided) => ({
+      ...provided,
+      color: isDarkTheme ? '#94a3b8' : '#64748b',
+      ':hover': { color: isDarkTheme ? '#a855f7' : '#8b5cf6' },
+      transition: 'color 0.2s ease',
+    }),
+    indicatorSeparator: (provided) => ({
+      ...provided,
+      backgroundColor: isDarkTheme ? '#475569' : '#e2e8f0',
+    }),
+    multiValue: (provided) => ({
+      ...provided,
+      backgroundColor: isDarkTheme ? '#475569' : '#f1f5f9',
+      borderRadius: '0.5rem',
+    }),
+    multiValueLabel: (provided) => ({
+      ...provided,
+      color: isDarkTheme ? '#f1f5f9' : '#1e293b',
+      padding: '0.25rem 0.5rem',
+    }),
+    multiValueRemove: (provided) => ({
+      ...provided,
+      color: isDarkTheme ? '#94a3b8' : '#64748b',
+      ':hover': {
+        backgroundColor: '#ef4444',
+        color: '#ffffff',
+      },
+      borderRadius: '0 0.5rem 0.5rem 0',
+    }),
   };
 
   const loadCities = async (countryCode) => {
@@ -168,28 +230,6 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
       setCities([]);
     }
   };
-
-  // Function to handle country selection and load cities
-  // const handleCountryChange = (country) => {
-  //   console.log("Country selected:", country);
-  //   setSelectedCountry(country);
-  //   setSelectedCity(null);
-    
-  //   if (country) {
-  //     setCityLoading(true);
-      
-  //     // Short timeout just for visual feedback that something is happening
-  //     setTimeout(() => {
-  //       // Get cities for the selected country or provide default cities
-  //       const cities = citiesByCountry[country.value] || citiesByCountry.DEFAULT;
-  //       console.log("Loading cities for", country.value, ":", cities);
-  //       setCities(cities);
-  //       setCityLoading(false);
-  //     }, 300);
-  //   } else {
-  //     setCities([]);
-  //   }
-  // };
 
   useEffect(() => {
     if (currentUser) {
@@ -436,21 +476,22 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
       gender: profileGender?.value,
       religion: userReligion?.value,
       relationship_intent: userRelationshipIntent?.value,
-      drinking_habits: userDrinkingHabits?.value,
-      smoking_habits: userSmokingHabits?.value,
+      // Backend expects these field names
+      drinks_alcohol: userDrinkingHabits?.value,
+      smokes: userSmokingHabits?.value,
       country: selectedCountry?.value,
       city: selectedCity?.value,
       location_latitude: locationLatitude,
       location_longitude: locationLongitude,
-      interests: selectedInterests.map(i => i.value), // Ensure we send the values
     };
 
     const preferencesPayload = {
-      preferred_gender: preferredGender?.value,
+      // Serializer expects arrays for these fields
+      preferred_gender: preferredGender?.value ? [preferredGender.value] : [],
       preferred_age_min: preferredAgeMin,
       preferred_age_max: preferredAgeMax,
-      preferred_religion: preferredReligion?.value,
-      preferred_distance: preferredDistance,
+      preferred_religion: preferredReligion?.value ? [preferredReligion.value] : [],
+      max_distance_km: preferredDistance,
     };
 
     try {
@@ -496,29 +537,29 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
       case 1: // Username and Bio
         return (
           <div className="text-center">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Tell Us About Yourself</h2>
-            <p className="text-gray-600 dark:text-gray-400 mb-6">
-              Your name is <span className="font-semibold text-primary">{displayName}</span>.
+            <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Tell Us About Yourself</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">
+              Your name is <span className="font-semibold text-purple-600 dark:text-purple-400">{displayName}</span>.
             </p>
             
-            <div className="w-full text-left mb-4">
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Username</label>
+            <div className="w-full text-left mb-6">
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Username</label>
               <input 
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full p-3 mt-1 bg-gray-100 dark:bg-gray-800 rounded-lg border-2 border-transparent focus:border-primary focus:outline-none transition"
+                className={commonInputClass}
                 placeholder="e.g., jane_doe_123"
               />
               {formErrors.username && <p className="text-red-500 text-sm mt-1">{formErrors.username}</p>}
             </div>
 
             <div className="w-full text-left">
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Bio</label>
+              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Bio</label>
               <textarea
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
-                className="w-full p-3 mt-1 bg-gray-100 dark:bg-gray-800 rounded-lg h-28 resize-none border-2 border-transparent focus:border-primary focus:outline-none transition"
+                className={`${commonInputClass} resize-none h-28`}
                 placeholder="Write a little about yourself..."
               />
               {formErrors.bio && <p className="text-red-500 text-sm mt-1">{formErrors.bio}</p>}
@@ -532,23 +573,33 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
             <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">The Basics</h2>
             <div className="space-y-6">
               <div className="w-full text-left">
-                <label className="font-semibold text-gray-700 dark:text-gray-300">Date of Birth</label>
+                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Date of Birth</label>
                 <input
                   type="date"
                   value={dateOfBirth}
                   onChange={(e) => setDateOfBirth(e.target.value)}
-                  className="w-full p-3 mt-1 bg-gray-100 dark:bg-gray-800 rounded-lg border-2 border-transparent focus:border-primary focus:outline-none transition"
+                  className={commonInputClass}
                 />
                 {formErrors.dateOfBirth && <p className="text-red-500 text-sm mt-1">{formErrors.dateOfBirth}</p>}
               </div>
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">I am a...</label>
-                <Select options={userGenderOptions} value={profileGender} onChange={setProfileGender} placeholder="Select your gender" />
+                <Select styles={selectStyles} options={userGenderOptions} value={profileGender} onChange={setProfileGender} placeholder="Select your gender" />
+
                 {formErrors.profileGender && <p className="text-red-500 text-sm mt-1">{formErrors.profileGender}</p>}
               </div>
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">Religion</label>
-                <Select options={userReligionOptions} value={userReligion} onChange={setUserReligion} placeholder="Select your religion" />
+                <Select
+                  styles={selectStyles}
+                  options={userReligionOptions}
+                  value={userReligion}
+                  onChange={setUserReligion}
+                  placeholder="Select your religion"
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                />
+
                 {formErrors.userReligion && <p className="text-red-500 text-sm mt-1">{formErrors.userReligion}</p>}
               </div>
             </div>
@@ -562,12 +613,14 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
             <div className="space-y-6">
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">Drinking Habits</label>
-                <Select options={appDrinkingHabitOptions} value={userDrinkingHabits} onChange={setUserDrinkingHabits} placeholder="Select..." />
+                <Select styles={selectStyles} options={appDrinkingHabitOptions} value={userDrinkingHabits} onChange={setUserDrinkingHabits} placeholder="Select..." />
+
                 {formErrors.userDrinkingHabits && <p className="text-red-500 text-sm mt-1">{formErrors.userDrinkingHabits}</p>}
               </div>
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">Smoking Habits</label>
-                <Select options={appSmokingHabitOptions} value={userSmokingHabits} onChange={setUserSmokingHabits} placeholder="Select..." />
+                <Select styles={selectStyles} options={appSmokingHabitOptions} value={userSmokingHabits} onChange={setUserSmokingHabits} placeholder="Select..." />
+
                 {formErrors.userSmokingHabits && <p className="text-red-500 text-sm mt-1">{formErrors.userSmokingHabits}</p>}
               </div>
             </div>
@@ -621,7 +674,8 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
             <div className="space-y-6">
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">I'm looking for...</label>
-                <Select options={userRelationshipIntentOptions} value={userRelationshipIntent} onChange={setUserRelationshipIntent} placeholder="Select your intent" />
+                <Select styles={selectStyles} options={userRelationshipIntentOptions} value={userRelationshipIntent} onChange={setUserRelationshipIntent} placeholder="Select your intent" />
+
                 {formErrors.userRelationshipIntent && <p className="text-red-500 text-sm mt-1">{formErrors.userRelationshipIntent}</p>}
               </div>
             </div>
@@ -635,7 +689,8 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
             <div className="space-y-6">
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">Preferred Gender</label>
-                <Select options={prefGenderOptions} value={preferredGender} onChange={setPreferredGender} placeholder="Select preferred gender" />
+                <Select styles={selectStyles} options={prefGenderOptions} value={preferredGender} onChange={setPreferredGender} placeholder="Select preferred gender" />
+
                 {formErrors.preferredGender && <p className="text-red-500 text-sm mt-1">{formErrors.preferredGender}</p>}
               </div>
               <div className="w-full text-left">
@@ -650,11 +705,23 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
               </div>
               <div className="w-full text-left">
                 <label className="font-semibold text-gray-700 dark:text-gray-300">Preferred Religion</label>
-                <Select options={prefReligionOptions} value={preferredReligion} onChange={setPreferredReligion} placeholder="Select preferred religion" />
+                <Select
+                  styles={selectStyles}
+                  options={prefReligionOptions}
+                  value={preferredReligion}
+                  onChange={setPreferredReligion}
+                  placeholder="Select preferred religion"
+                  menuPortalTarget={document.body}
+                  menuPosition="fixed"
+                />
+
                 {formErrors.preferredReligion && <p className="text-red-500 text-sm mt-1">{formErrors.preferredReligion}</p>}
               </div>
               <div className="w-full text-left">
-                <label className="font-semibold text-gray-700 dark:text-gray-300">Maximum Distance</label>
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-gray-700 dark:text-gray-300">Maximum Distance</label>
+                  <span className="text-sm text-gray-700 dark:text-gray-300 font-semibold">{preferredDistance} km</span>
+                </div>
                 <input type="range" min="5" max="500" step="5" value={preferredDistance} onChange={e => setPreferredDistance(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-fuchsia-600" />
                 {formErrors.preferredDistance && <p className="text-red-500 text-sm mt-1">{formErrors.preferredDistance}</p>}
               </div>
@@ -679,35 +746,90 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        setLocationLatitude(latitude);
-        setLocationLongitude(longitude);
+        // Round to 6 decimal places to match backend validation
+        const roundedLatitude = Math.round(latitude * 1000000) / 1000000;
+        const roundedLongitude = Math.round(longitude * 1000000) / 1000000;
+        setLocationLatitude(roundedLatitude);
+        setLocationLongitude(roundedLongitude);
 
         try {
-          const response = await fetch(
-            `http://api.geonames.org/findNearestAddressJSON?lat=${latitude}&lng=${longitude}&username=${GEONAMES_USERNAME}`
-          );
-          if (!response.ok) throw new Error("Failed to fetch address.");
-          
-          const data = await response.json();
-          console.log("GeoNames API Response:", data); // Add this for debugging
+          // Try multiple geocoding services for better reliability
+          let addressFound = false;
 
-          if (data.address) {
-            const { streetNumber, street, placename, adminName1, postalcode } = data.address;
-            const address = [streetNumber, street, placename, adminName1, postalcode].filter(Boolean).join(', ');
-            setExactAddress(address);
+          // First try: OpenStreetMap Nominatim (free, no API key required)
+          try {
+            const nominatimResponse = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${roundedLatitude}&lon=${roundedLongitude}&zoom=18&addressdetails=1`,
+              {
+                headers: {
+                  'User-Agent': 'ShebaLove-Dating-App/1.0'
+                }
+              }
+            );
+            
+            if (nominatimResponse.ok) {
+              const nominatimData = await nominatimResponse.json();
+              console.log("Nominatim API Response:", nominatimData);
+              
+              if (nominatimData.display_name) {
+                setExactAddress(nominatimData.display_name);
+                addressFound = true;
 
-            if (data.address.countryCode) {
-              const country = countryOptions.find(c => c.value === data.address.countryCode);
-              if (country) {
-                handleCountryChange(country);
+                // Try to set country from the response
+                if (nominatimData.address && nominatimData.address.country_code) {
+                  const countryCode = nominatimData.address.country_code.toUpperCase();
+                  const country = countryOptions.find(c => c.value === countryCode);
+                  if (country) {
+                    handleCountryChange(country);
+                  }
+                }
               }
             }
-          } else {
-            setExactAddressError("Could not find a valid address for your location.");
+          } catch (nominatimError) {
+            console.log("Nominatim failed, trying GeoNames...", nominatimError);
           }
+
+          // Second try: GeoNames with HTTPS (if Nominatim failed)
+          if (!addressFound) {
+            try {
+              const geonamesResponse = await fetch(
+                `https://secure.geonames.org/findNearbyPlaceNameJSON?lat=${roundedLatitude}&lng=${roundedLongitude}&username=${GEONAMES_USERNAME}&maxRows=1`
+              );
+              
+              if (geonamesResponse.ok) {
+                const geonamesData = await geonamesResponse.json();
+                console.log("GeoNames API Response:", geonamesData);
+                
+                if (geonamesData.geonames && geonamesData.geonames.length > 0) {
+                  const place = geonamesData.geonames[0];
+                  const address = `${place.name}, ${place.adminName1}, ${place.countryName}`;
+                  setExactAddress(address);
+                  addressFound = true;
+
+                  // Set country from GeoNames response
+                  if (place.countryCode) {
+                    const country = countryOptions.find(c => c.value === place.countryCode);
+                    if (country) {
+                      handleCountryChange(country);
+                    }
+                  }
+                }
+              }
+            } catch (geonamesError) {
+              console.log("GeoNames also failed:", geonamesError);
+            }
+          }
+
+          // Third try: Simple coordinate display (fallback)
+          if (!addressFound) {
+            setExactAddress(`Lat: ${roundedLatitude}, Lng: ${roundedLongitude}`);
+            setExactAddressError("Could not determine exact address, but coordinates were detected.");
+          }
+
         } catch (error) {
-          console.error("Reverse geocoding error:", error);
-          setExactAddressError("Could not determine address from your location.");
+          console.error("All geocoding services failed:", error);
+          setExactAddress(`Lat: ${roundedLatitude}, Lng: ${roundedLongitude}`);
+          setExactAddressError("Could not determine address, but location coordinates were detected.");
         } finally {
           setIsDetectingLocation(false);
         }
@@ -769,16 +891,10 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
               placeholder="Select your country"
               menuPortalTarget={document.body} 
               maxMenuHeight={220}
-              styles={{
-                ...selectStyles,
-                menuPortal: base => ({ ...base, zIndex: 9999 }),
-                menu: (provided) => ({
-                  ...provided,
-                  backgroundColor: 'var(--input-bg)',
-                })
-              }}
+              styles={selectStyles}
               className="w-full"
             />
+
           </div>
           
           {selectedCountry && (
@@ -794,35 +910,28 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
                 noOptionsMessage={() => "No cities found"}
                 menuPortalTarget={document.body}
                 maxMenuHeight={220}
-                styles={{
-                  ...selectStyles,
-                  menuPortal: base => ({ ...base, zIndex: 9999 }),
-                  menu: (provided) => ({
-                    ...provided,
-                    zIndex: 9999,
-                    backgroundColor: 'var(--input-bg)',
-                  })
-                }}
+                styles={selectStyles}
                 className="w-full"
               />
+
             </div>
           )}
           
           <div className="mt-8">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Exact Location (Optional)</label>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Exact Location (Optional)</label>
             <div className="flex w-full">
               <input 
                 type="text" 
                 value={exactAddress}
                 onChange={(e) => setExactAddress(e.target.value)}
                 placeholder="E.g., Downtown, 123 Main St"
-                className="flex-1 p-2.5 bg-gray-100 dark:bg-gray-800 rounded-l-lg border border-gray-300 dark:border-gray-600 focus:border-primary focus:outline-none transition"
+                className="flex-1 p-3 bg-gray-50 dark:bg-slate-700 rounded-l-xl border border-gray-200 dark:border-slate-600 focus:border-purple-500 dark:focus:border-purple-400 focus:outline-none transition-all duration-200 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
               />
               <button 
                 type="button"
                 onClick={handleDetectLocation}
                 disabled={isDetectingLocation}
-                className="w-24 flex items-center justify-center px-4 py-2.5 text-white bg-primary rounded-r-lg hover:bg-primary-dark transition-colors disabled:bg-primary-light disabled:cursor-not-allowed"
+                className="px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-medium rounded-r-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[100px]"
               >
                 {isDetectingLocation ? <><FiLoader className="animate-spin"/> Detecting...</> : "Detect"}
               </button>
@@ -835,58 +944,115 @@ export default function ProfileSetup({ currentUser, authToken, onFinish }) {
   };
 
   const ProgressBar = ({ currentStep, totalSteps }) => (
-    <div className="flex items-center justify-center gap-2 mb-4">
-      {[...Array(totalSteps).keys()].map((i) => (
-        <div
-          key={i}
-          className={`h-2 rounded-full transition-all duration-300 ${
-            i <= currentStep ? 'bg-primary w-8' : 'bg-gray-300 dark:bg-gray-600 w-4'
-          }`}
+    <div className="w-full max-w-2xl mx-auto mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+          Step {currentStep + 1} of {totalSteps}
+        </span>
+        <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
+          {Math.round(((currentStep + 1) / totalSteps) * 100)}% Complete
+        </span>
+      </div>
+      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+        <div 
+          className="h-full bg-gradient-to-r from-purple-500 to-pink-600 rounded-full transition-all duration-500 ease-out"
+          style={{ width: `${((currentStep + 1) / totalSteps) * 100}%` }}
         />
-      ))}
+      </div>
+      <div className="flex justify-between mt-2">
+        {[...Array(totalSteps).keys()].map((i) => (
+          <div
+            key={i}
+            className={`w-3 h-3 rounded-full transition-all duration-300 ${
+              i <= currentStep 
+                ? 'bg-gradient-to-r from-purple-500 to-pink-600 scale-110' 
+                : 'bg-gray-300 dark:bg-gray-600'
+            }`}
+          />
+        ))}
+      </div>
     </div>
   );
 
   return (
-    <form
-      onSubmit={nextStep}
-      className="flex flex-col items-center pt-8 pb-28 px-4 min-h-screen font-sans bg-gradient-to-br from-pink-100 via-fuchsia-100 to-purple-200 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 text-gray-800 dark:text-gray-200"
-    >
-      <h1 className="text-3xl font-bold text-fuchsia-600 dark:text-fuchsia-400 mb-2">Profile Setup</h1>
-      <ProgressBar currentStep={step} totalSteps={totalSteps} />
-
-      <div className="w-full max-w-md md:max-w-4xl bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 sm:p-8 flex flex-col gap-5 overflow-y-auto max-h-[calc(100vh-14rem)]">
-        {renderStepContent()}
-      </div>
-
-      {/* Navigation Buttons */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 p-4 border-t border-gray-200 dark:border-gray-700 shadow-top z-50">
-        <div className="w-full max-w-md md:max-w-4xl mx-auto flex justify-between items-center">
-          {step > 0 ? (
-            <button
-              type="button"
-              onClick={prevStep}
-              disabled={step === 0}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100 font-semibold shadow hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-            >
-              <FiChevronLeft /> Back
-            </button>
-          ) : <span className="w-[90px]"></span> /* Placeholder to balance layout */}
-          <button
-            type="submit" 
-            disabled={isSubmitting}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-fuchsia-600 text-white font-bold shadow-lg hover:bg-fuchsia-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSubmitting ? <><FiLoader className="animate-spin"/> Saving...</> : (step < totalSteps - 1 ? (<>Next <FiChevronRight /></>) : "Finish")}
-          </button>
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+      <div className="flex flex-col items-center pt-8 pb-32 px-4 min-h-screen">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-2">
+            Profile Setup
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 text-lg">
+            Let's create your perfect dating profile
+          </p>
         </div>
-        {Object.keys(formErrors).length > 0 && (
-            <p className="text-red-500 text-sm mt-2 text-center font-semibold">
-                Please correct the errors above before continuing.
-            </p>
-        )}
-        {submitError && <p className="text-red-500 text-sm mt-4 text-center">{submitError}</p>}
+
+        <ProgressBar currentStep={step} totalSteps={totalSteps} />
+
+        {/* Main Content Card */}
+        <div className="w-full max-w-2xl">
+          <form onSubmit={nextStep}>
+            <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+              {/* Content */}
+              <div className="p-8 sm:p-12">
+                {renderStepContent()}
+              </div>
+              
+              {/* Navigation Footer */}
+              <div className="border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-700/50 p-6">
+                <div className="flex justify-between items-center gap-4">
+                  {step > 0 ? (
+                    <button
+                      type="button"
+                      onClick={prevStep}
+                      className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-white dark:bg-slate-600 text-gray-700 dark:text-gray-200 font-medium hover:bg-gray-100 dark:hover:bg-slate-500 transition-all duration-200 border border-gray-200 dark:border-slate-500"
+                    >
+                      <FiChevronLeft size={18} /> Back
+                    </button>
+                  ) : (
+                    <div className="w-24"></div>
+                  )}
+                  
+                  <button
+                    type="submit" 
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <FiLoader className="animate-spin" size={18} /> 
+                        Saving...
+                      </>
+                    ) : step < totalSteps - 1 ? (
+                      <>
+                        Next <FiChevronRight size={18} />
+                      </>
+                    ) : (
+                      <>
+                        <FiCheckCircle size={18} /> Finish
+                      </>
+                    )}
+                  </button>
+                </div>
+                
+                {Object.keys(formErrors).length > 0 && (
+                  <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                    <p className="text-red-600 dark:text-red-400 text-sm text-center font-medium">
+                      Please correct the errors above before continuing.
+                    </p>
+                  </div>
+                )}
+                
+                {submitError && (
+                  <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                    <p className="text-red-600 dark:text-red-400 text-sm text-center">{submitError}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </form>
+        </div>
       </div>
-    </form>
+    </div>
   );
 }

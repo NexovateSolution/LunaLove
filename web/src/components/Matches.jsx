@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FiMessageCircle, FiSliders } from "react-icons/fi";
+import { FiMessageCircle, FiSliders, FiHeart, FiStar, FiMapPin, FiClock } from "react-icons/fi";
 import DiscoveryFilters from "./DiscoveryFilters";
 
 export default function Matches({ matches, likedMe, onChat }) {
@@ -51,115 +51,199 @@ export default function Matches({ matches, likedMe, onChat }) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center py-10 px-4
-      bg-gradient-to-br from-pink-100 via-fuchsia-100 to-purple-200
-      dark:from-gray-900 dark:via-gray-800 dark:to-gray-900"
-    >
-      <h2 className="text-3xl font-extrabold text-fuchsia-700 mb-8">Your Matches</h2>
-      {/* Tab Switcher */}
-      <div className="flex gap-2 mb-4">
-        <button
-          className={`px-4 py-2 rounded-full ${tab === "matches" ? "bg-fuchsia-600 text-white" : "bg-fuchsia-100 text-fuchsia-700"}`}
-          onClick={() => setTab("matches")}
-        >
-          My Matches
-        </button>
-        <button
-          className={`px-4 py-2 rounded-full ${tab === "likedMe" ? "bg-fuchsia-600 text-white" : "bg-fuchsia-100 text-fuchsia-700"}`}
-          onClick={() => setTab("likedMe")}
-        >
-          People Who Liked Me
-        </button>
-      </div>
-      {/* Recommended Match */}
-      {tab === "matches" && recommendedMatch && (
-        <div className="w-full max-w-lg mb-6">
-          <div className="flex items-center bg-fuchsia-50 dark:bg-gray-800/80 rounded-2xl shadow-lg border-2 border-fuchsia-400 p-5 relative animate-pulse">
-            <img
-              src={recommendedMatch.avatar}
-              alt={recommendedMatch.name}
-              className="w-20 h-20 rounded-full border-4 border-fuchsia-400 mr-6"
-            />
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-bold text-xl text-fuchsia-700">{recommendedMatch.name}</span>
-                <span className="text-gray-400 text-lg">{recommendedMatch.age}</span>
-              </div>
-              <div className="flex flex-wrap gap-1 mb-2">
-                {recommendedMatch.interests && recommendedMatch.interests.map(i => (
-                  <span key={i} className="px-2 py-0.5 bg-fuchsia-100 text-fuchsia-700 rounded-full text-xs">{i}</span>
-                ))}
-              </div>
-              <div className="text-gray-600 dark:text-gray-200 text-sm">
-                {recommendedMatch.lastMessage || "Say hi to your top match!"}
-              </div>
-            </div>
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-white/80 dark:bg-slate-800/80 backdrop-blur-lg border-b border-gray-200 dark:border-slate-700">
+        <div className="max-w-4xl mx-auto px-4 py-6">
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+              Your Matches
+            </h1>
+            <p className="text-gray-600 dark:text-gray-400 mt-1">
+              {tab === "matches" ? "People you've matched with" : "People who liked you"}
+            </p>
+          </div>
+          
+          {/* Tab Switcher */}
+          <div className="flex bg-gray-100 dark:bg-slate-700 rounded-2xl p-1">
             <button
-              className="ml-4 flex items-center gap-1 px-4 py-2 rounded-full bg-fuchsia-500 text-white font-semibold shadow hover:bg-fuchsia-600 transition"
-              onClick={() => onChat(recommendedMatch)}
-              title="Open Chat"
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all ${
+                tab === "matches" 
+                  ? "bg-white dark:bg-slate-600 text-purple-600 dark:text-purple-400 shadow-sm" 
+                  : "text-gray-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400"
+              }`}
+              onClick={() => setTab("matches")}
             >
-              <FiMessageCircle className="text-xl" />
-              Chat
+              <FiHeart size={18} />
+              My Matches
+              {filteredMatches.length > 0 && (
+                <span className="bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-400 px-2 py-1 rounded-full text-xs font-semibold">
+                  {filteredMatches.length}
+                </span>
+              )}
             </button>
-            <span className="absolute top-2 right-4 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow">
-              Recommended
-            </span>
+            <button
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all ${
+                tab === "likedMe" 
+                  ? "bg-white dark:bg-slate-600 text-purple-600 dark:text-purple-400 shadow-sm" 
+                  : "text-gray-600 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400"
+              }`}
+              onClick={() => setTab("likedMe")}
+            >
+              <FiStar size={18} />
+              People Who Liked Me
+              {filteredLikedMe.length > 0 && (
+                <span className="bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-400 px-2 py-1 rounded-full text-xs font-semibold">
+                  {filteredLikedMe.length}
+                </span>
+              )}
+            </button>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Matches or LikedMe List */}
-      <div className="w-full max-w-lg flex flex-col gap-5">
-        {(tab === "matches" ? filteredMatches : filteredLikedMe).length > 0 ? (
-          (tab === "matches" ? filteredMatches : filteredLikedMe).map(match => (
-            <div
-              key={match.id}
-              className="flex items-center bg-white/80 dark:bg-gray-900/80 rounded-2xl shadow-md border border-fuchsia-100 dark:border-fuchsia-900 transition-transform hover:scale-[1.02] hover:shadow-lg p-4 relative"
-            >
-              <img
-                src={match.avatar}
-                alt={match.name}
-                className="w-16 h-16 rounded-full border-2 border-fuchsia-400 mr-4"
-              />
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-lg text-fuchsia-600">{match.name}</span>
-                  <span className="text-gray-400 text-sm">{match.age}</span>
-                  {match.unread && (
-                    <span className="ml-2 w-3 h-3 bg-fuchsia-500 rounded-full animate-pulse"></span>
-                  )}
-                </div>
-                <div className="text-gray-500 dark:text-gray-300 text-sm mt-1">
-                  {match.lastMessage}
-                </div>
-                {/* Show interests */}
-                {match.interests && match.interests.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {match.interests.map(i => (
-                      <span key={i} className="px-2 py-0.5 bg-fuchsia-100 text-fuchsia-700 rounded-full text-xs">{i}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button
-                className="ml-4 flex items-center gap-1 px-4 py-2 rounded-full bg-fuchsia-500 text-white font-semibold shadow hover:bg-fuchsia-600 transition"
-                onClick={() => onChat(match)}
-                title="Open Chat"
-              >
-                <FiMessageCircle className="text-xl" />
-                Chat
-              </button>
+      {/* Content */}
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        {/* Recommended Match */}
+        {tab === "matches" && recommendedMatch && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <FiStar className="text-yellow-500" size={20} />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Top Match</h2>
             </div>
-          ))
-        ) : (
-          <div className="text-gray-400 text-center py-12">
-            {tab === "matches"
-              ? "No matches found. Try adjusting your filters!"
-              : "No one has liked you yet. Keep swiping!"}
+            <div className="bg-gradient-to-r from-purple-500 to-pink-600 p-1 rounded-3xl">
+              <div className="bg-white dark:bg-slate-800 rounded-3xl p-6">
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <img
+                      src={recommendedMatch.avatar}
+                      alt={recommendedMatch.name}
+                      className="w-20 h-20 rounded-full object-cover"
+                    />
+                    <div className="absolute -top-1 -right-1 bg-yellow-500 text-white rounded-full p-1">
+                      <FiStar size={12} />
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white">{recommendedMatch.name}</h3>
+                      <span className="text-gray-500 dark:text-gray-400">{recommendedMatch.age}</span>
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-300 text-sm mb-3">
+                      {recommendedMatch.lastMessage || "Say hi to your top match! ✨"}
+                    </p>
+                    {recommendedMatch.interests && recommendedMatch.interests.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {recommendedMatch.interests.slice(0, 3).map(interest => (
+                          <span key={interest} className="px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded-full text-xs font-medium">
+                            {interest}
+                          </span>
+                        ))}
+                        {recommendedMatch.interests.length > 3 && (
+                          <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-full text-xs">
+                            +{recommendedMatch.interests.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white px-6 py-3 rounded-2xl font-semibold shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 flex items-center gap-2"
+                    onClick={() => onChat(recommendedMatch)}
+                  >
+                    <FiMessageCircle size={18} />
+                    Chat
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
+
+        {/* Matches Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {(tab === "matches" ? filteredMatches : filteredLikedMe).length > 0 ? (
+            (tab === "matches" ? filteredMatches : filteredLikedMe).map(match => (
+              <div
+                key={match.id}
+                className="bg-white dark:bg-slate-800 rounded-3xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 border border-gray-200 dark:border-slate-700 overflow-hidden"
+              >
+                <div className="p-6">
+                  <div className="flex items-start gap-4 mb-4">
+                    <div className="relative">
+                      <img
+                        src={match.avatar}
+                        alt={match.name}
+                        className="w-16 h-16 rounded-full object-cover"
+                      />
+                      {match.unread && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white truncate">{match.name}</h3>
+                        <span className="text-gray-500 dark:text-gray-400 text-sm">{match.age}</span>
+                      </div>
+                      {match.distance && (
+                        <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400 text-sm mb-2">
+                          <FiMapPin size={14} />
+                          <span>{match.distance}km away</span>
+                        </div>
+                      )}
+                      <p className="text-gray-600 dark:text-gray-300 text-sm line-clamp-2">
+                        {match.lastMessage || "Start a conversation!"}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {match.interests && match.interests.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-4">
+                      {match.interests.slice(0, 3).map(interest => (
+                        <span key={interest} className="px-2 py-1 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-full text-xs">
+                          {interest}
+                        </span>
+                      ))}
+                      {match.interests.length > 3 && (
+                        <span className="px-2 py-1 bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400 rounded-full text-xs">
+                          +{match.interests.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  
+                  <button
+                    className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white py-3 rounded-2xl font-semibold transition-all duration-200 flex items-center justify-center gap-2"
+                    onClick={() => onChat(match)}
+                  >
+                    <FiMessageCircle size={18} />
+                    Start Chat
+                  </button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="col-span-full text-center py-16">
+              <div className="text-gray-400 dark:text-gray-500 mb-4">
+                {tab === "matches" ? (
+                  <FiHeart size={48} className="mx-auto mb-4 opacity-50" />
+                ) : (
+                  <FiStar size={48} className="mx-auto mb-4 opacity-50" />
+                )}
+              </div>
+              <h3 className="text-xl font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                {tab === "matches" ? "No matches yet" : "No likes yet"}
+              </h3>
+              <p className="text-gray-500 dark:text-gray-500">
+                {tab === "matches"
+                  ? "Keep swiping to find your perfect match!"
+                  : "Don't worry, someone will notice you soon!"}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
+
       {/* Discovery Filters Modal */}
       <DiscoveryFilters
         open={filtersOpen}

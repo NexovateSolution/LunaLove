@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { FiCheckCircle, FiHome, FiLoader, FiXCircle } from 'react-icons/fi';
-import api from '../api.js';
+import api, { activateSubscription } from '../api.js';
 
-export default function PurchaseSuccess({ onNavigate }) {
+export default function PurchaseSuccess({ onNavigate, onUserRefresh }) {
   const [verificationStatus, setVerificationStatus] = useState('verifying'); // 'verifying', 'success', 'failed'
+  const [activationMsg, setActivationMsg] = useState('');
 
   useEffect(() => {
     const verifyPayment = async () => {
@@ -70,6 +71,8 @@ export default function PurchaseSuccess({ onNavigate }) {
       };
 
       const tx_ref = getTxRef();
+      const sp = new URLSearchParams(window.location.search || '');
+      const planIdParam = sp.get('plan_id') || null;
 
       // If we can't find tx_ref but we do have an explicit success status from the provider, optimistically show success
       const searchParams = new URLSearchParams(window.location.search || '');
@@ -79,6 +82,23 @@ export default function PurchaseSuccess({ onNavigate }) {
       if (!tx_ref && (statusParam === 'success' || statusParam === 'successful')) {
         setVerificationStatus('success');
         console.warn('No tx_ref found but status indicates success. Showing success optimistically.');
+        // If subscription purchase redirected directly with plan_id, activate perks now
+        if (planIdParam) {
+          try {
+            const pid = parseInt(planIdParam, 10);
+            if (!Number.isNaN(pid)) {
+              const res = await activateSubscription(pid);
+              setActivationMsg('Your subscription is active!');
+              // Refresh the current user in App state
+              try {
+                const me = await api.get('/user/me/');
+                onUserRefresh && onUserRefresh(me.data);
+              } catch (_) {}
+            }
+          } catch (e) {
+            console.error('Activation failed:', e);
+          }
+        }
         return;
       }
 
@@ -98,6 +118,22 @@ export default function PurchaseSuccess({ onNavigate }) {
             setVerificationStatus('success');
             // Clear stored reference once verified
             try { localStorage.removeItem('last_tx_ref'); } catch (_) {}
+            // If plan_id is present, activate subscription perks immediately
+            if (planIdParam) {
+              try {
+                const pid = parseInt(planIdParam, 10);
+                if (!Number.isNaN(pid)) {
+                  const res = await activateSubscription(pid);
+                  setActivationMsg('Your subscription is active!');
+                  try {
+                    const me = await api.get('/user/me/');
+                    onUserRefresh && onUserRefresh(me.data);
+                  } catch (_) {}
+                }
+              } catch (e) {
+                console.error('Activation failed:', e);
+              }
+            }
             return;
           }
           // Wait 1.5 seconds before retrying
@@ -133,6 +169,9 @@ export default function PurchaseSuccess({ onNavigate }) {
             <p className="text-gray-600 dark:text-gray-300 mb-8">
               Welcome to ShebaLove Premium! You now have access to all exclusive features.
             </p>
+            {activationMsg && (
+              <p className="text-green-600 dark:text-green-400 font-medium mb-6">{activationMsg}</p>
+            )}
             <button
               onClick={() => onNavigate('home')}
               className="w-full flex items-center justify-center gap-3 bg-primary text-white px-6 py-4 rounded-lg shadow-md hover:bg-fuchsia-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-100"

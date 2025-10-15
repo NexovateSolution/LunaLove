@@ -155,7 +155,7 @@ export default function Signup({ onLogin, onContinue }) {
         </button>
       </form>
 
-      <div className="relative flex items-center justify-center my-4">
+      <div className="relative">
         <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div>
         <div className="relative px-2 bg-white dark:bg-gray-800 text-sm text-gray-500">OR</div>
       </div>
@@ -169,6 +169,8 @@ export default function Signup({ onLogin, onContinue }) {
           size="large"
           logo_alignment="left"
           text="signup_with"
+          useOneTap={false} // Disable one-tap to avoid origin issues
+          auto_select={false} // Disable auto-select
         />
         <button type="button" className="w-full flex items-center justify-center gap-3 py-3 rounded-lg bg-[#1877F2] text-white font-semibold hover:bg-[#166fe5] transition-colors">
           <FaFacebook className="w-6 h-6" />

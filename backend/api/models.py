@@ -1,5 +1,6 @@
 from django.db import models, transaction
 from django.conf import settings
+from django.utils import timezone
 import uuid
 from django.contrib.auth.models import AbstractUser # If you want to extend the default user
 
@@ -113,6 +114,14 @@ class User(AbstractUser): # Extending Django's User
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Subscription perks
+    has_boost = models.BooleanField(default=False)
+    can_see_likes = models.BooleanField(default=False)
+    ad_free = models.BooleanField(default=False)
+    boost_expiry = models.DateTimeField(null=True, blank=True)
+    likes_reveal_expiry = models.DateTimeField(null=True, blank=True)
+    ad_free_expiry = models.DateTimeField(null=True, blank=True)
+
     # To use this custom user model, you need to set AUTH_USER_MODEL in settings.py
     # AUTH_USER_MODEL = 'api.User'
 
@@ -121,32 +130,19 @@ class User(AbstractUser): # Extending Django's User
 
     def update_profile_completeness_score(self):
         """Calculates and updates the profile completeness score."""
-        # --- TEMPORARY DEVELOPMENT FIX ---
-        # Force profile to be 100% complete to avoid being stuck on profile setup.
-        # This should be removed before going to production.
-        score = 100
-        if self.profile_completeness_score != score:
-            self.profile_completeness_score = score
-            # Use a separate transaction to ensure this save happens immediately
-            with transaction.atomic():
-                self.save(update_fields=['profile_completeness_score'])
-        return score
-        # --- END TEMPORARY FIX ---
-
-        # Original logic below
-        '''
+        # Compute based on filled fields
         score = 0
         filled_fields = 0
         total_possible_fields = 10  # Adjust as more criteria are added
 
         # Define criteria and their contribution
-        if self.bio and self.bio.strip():
+        if self.bio and str(self.bio).strip():
             filled_fields += 1
         if self.date_of_birth:
             filled_fields += 1
         if self.gender:
             filled_fields += 1
-        if self.city and self.city.strip(): # Or check latitude/longitude
+        if (self.city and str(self.city).strip()) or (self.location_latitude and self.location_longitude):
             filled_fields += 1
         if self.relationship_intent:
             filled_fields += 1
@@ -156,26 +152,51 @@ class User(AbstractUser): # Extending Django's User
             filled_fields += 1
         if self.smokes:
             filled_fields += 1
-        if self.interests.exists():
-            filled_fields += 1
-        if hasattr(self, 'photos') and self.photos.exists(): # 'photos' is the related_name for UserPhoto
-            filled_fields += 1
-        
+        try:
+            if self.interests.exists():
+                filled_fields += 1
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'photos') and self.photos.exists():  # 'photos' related_name for UserPhoto
+                filled_fields += 1
+        except Exception:
+            pass
+
         # Calculate score as a percentage
         if total_possible_fields > 0:
             score = int((filled_fields / total_possible_fields) * 100)
-        
+
         if self.profile_completeness_score != score:
             self.profile_completeness_score = score
-            # Use transaction.atomic to ensure this save is part of the overall request transaction if applicable
-            # and only update the score field to avoid unintended side effects or signals.
             with transaction.atomic():
                 self.save(update_fields=['profile_completeness_score'])
         return score
-        '''
 
     def get_full_name(self):
         return f"{self.first_name} {self.last_name}"
+
+    # --- Perks expiry enforcement ---
+    def enforce_perk_expiry(self, save=True):
+        """If any perk has expired, disable it and optionally save."""
+        now = timezone.now()
+        changed = False
+        if self.has_boost and self.boost_expiry and self.boost_expiry <= now:
+            self.has_boost = False
+            changed = True
+        if self.can_see_likes and self.likes_reveal_expiry and self.likes_reveal_expiry <= now:
+            self.can_see_likes = False
+            changed = True
+        if self.ad_free and self.ad_free_expiry and self.ad_free_expiry <= now:
+            self.ad_free = False
+            changed = True
+        if changed and save:
+            with transaction.atomic():
+                self.save(update_fields=[
+                    'has_boost', 'can_see_likes', 'ad_free',
+                    'updated_at',
+                ])
+        return changed
 
 class UserPhoto(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -252,6 +273,82 @@ class UserPreference(models.Model):
     def __str__(self):
         return f"{self.user.username}'s Preferences"
 
+# Enhanced Like system for the new matching flow
+class Like(models.Model):
+    class LikeStatus(models.TextChoices):
+        LIKED = 'liked', 'Liked'
+        REMOVED = 'removed', 'Removed'
+        MATCHED = 'matched', 'Matched'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    liker = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='likes_given', on_delete=models.CASCADE)
+    liked = models.ForeignKey(settings.AUTH_USER_MODEL, related_name='likes_received', on_delete=models.CASCADE)
+    status = models.CharField(max_length=10, choices=LikeStatus.choices, default=LikeStatus.LIKED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('liker', 'liked')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['liker', 'status']),
+            models.Index(fields=['liked', 'status']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.liker.username} {self.status} {self.liked.username}"
+
+    def check_for_mutual_match(self):
+        """Check if this like creates a mutual match and create Match if so"""
+        import logging
+        logging.info(f"Checking mutual match for {self.liker.first_name} -> {self.liked.first_name}")
+        logging.info(f"Current like status: {self.status}")
+        
+        if self.status != self.LikeStatus.LIKED:
+            logging.info("Current like is not LIKED status, returning None")
+            return None
+        
+        # Check if the liked user also liked back
+        mutual_like = Like.objects.filter(
+            liker=self.liked,
+            liked=self.liker,
+            status=self.LikeStatus.LIKED
+        ).first()
+        
+        logging.info(f"Looking for mutual like: {self.liked.first_name} -> {self.liker.first_name}")
+        logging.info(f"Mutual like found: {mutual_like}")
+        
+        if mutual_like:
+            logging.info("Mutual like found! Creating match...")
+            # Create match
+            user1, user2 = sorted([self.liker, self.liked], key=lambda u: str(u.id))
+            match, created = Match.objects.get_or_create(
+                user1=user1,
+                user2=user2,
+                defaults={'matched_at': timezone.now()}
+            )
+            
+            logging.info(f"Match created: {created}, Match ID: {match.id if match else 'None'}")
+            
+            # Update both likes to matched status (regardless of whether match was just created)
+            if self.status != self.LikeStatus.MATCHED:
+                self.status = self.LikeStatus.MATCHED
+                self.save(update_fields=['status', 'updated_at'])
+                logging.info(f"Updated current like {self.id} to MATCHED status")
+            
+            if mutual_like.status != self.LikeStatus.MATCHED:
+                mutual_like.status = self.LikeStatus.MATCHED
+                mutual_like.save(update_fields=['status', 'updated_at'])
+                logging.info(f"Updated mutual like {mutual_like.id} to MATCHED status")
+            
+            logging.info("Both likes are now MATCHED status")
+            # Return the current like object (which is now matched)
+            return self
+        else:
+            logging.info("No mutual like found")
+        return None
+
 class Swipe(models.Model):
     class SwipeType(models.TextChoices):
         LIKE = 'like', 'Like'
@@ -287,6 +384,10 @@ class Match(models.Model):
 
     def __str__(self):
         return f"Match between {self.user1.username} and {self.user2.username}"
+
+    def get_other_user(self, current_user):
+        """Get the other user in this match"""
+        return self.user2 if self.user1 == current_user else self.user1
 
 
 class Message(models.Model):
@@ -336,3 +437,19 @@ class ChatbotMessage(models.Model):
 
     def __str__(self):
         return f"{self.sender_type.capitalize()} message: '{self.message_text}' at {self.timestamp}"
+
+
+class ChatMessage(models.Model):
+    """Model for real-time chat messages between matched users"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    match = models.ForeignKey('Like', on_delete=models.CASCADE, related_name='chat_messages')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_chat_messages')
+    content = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+    
+    class Meta:
+        ordering = ['timestamp']
+    
+    def __str__(self):
+        return f"Message from {self.sender.first_name} at {self.timestamp}"

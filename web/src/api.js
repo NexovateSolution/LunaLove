@@ -87,4 +87,209 @@ export const initializePayment = async (payload = {}) => {
   }
 };
 
+// --- Coins & Gifts ---
+export const getCoinPackages = async () => {
+  try {
+    const response = await apiClient.get('/coins/packages/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching coin packages:', error);
+    throw error;
+  }
+};
+
+export const createTopUp = async (packageId) => {
+  try {
+    const response = await apiClient.post('/coins/topup/', { package_id: packageId });
+    return response.data;
+  } catch (error) {
+    console.error('Error creating top-up:', error);
+    throw error;
+  }
+};
+
+export const getWallet = async () => {
+  try {
+    const response = await apiClient.get('/wallet/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching wallet:', error);
+    throw error;
+  }
+};
+
+// --- Subscriptions ---
+export const getSubscriptionPlans = async () => {
+  try {
+    const response = await apiClient.get('/subscription-plans/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching subscription plans:', error);
+    throw error;
+  }
+};
+
+export const subscribeToPlan = async (planId) => {
+  try {
+    const response = await apiClient.post('/subscriptions/subscribe/', { plan_id: planId });
+    return response.data;
+  } catch (error) {
+    console.error('Error subscribing to plan:', error);
+    throw error;
+  }
+};
+
+export const activateSubscription = async (planId) => {
+  try {
+    const response = await apiClient.post('/subscriptions/activate/', { plan_id: planId });
+    return response.data;
+  } catch (error) {
+    console.error('Error activating subscription:', error);
+    throw error;
+  }
+};
+
+// --- Gifts ---
+export const getGifts = async () => {
+  try {
+    const response = await apiClient.get('/gifts/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching gifts:', error);
+    throw error;
+  }
+};
+
+export const sendGift = async (recipientId, giftId) => {
+  try {
+    const response = await apiClient.post('/gifts/send/', { recipient_id: recipientId, gift_id: giftId });
+    return response.data;
+  } catch (error) {
+    console.error('Error sending gift:', error);
+    throw error;
+  }
+};
+
+// --- Account Management ---
+export const deleteAccount = async () => {
+  try {
+    const response = await apiClient.delete('/user/me/');
+    // If backend returns 204, treat as success
+    if (response.status === 204) {
+      localStorage.removeItem('token'); // Clear token on success
+      return { detail: 'Deleted' };
+    }
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    throw error;
+  }
+};
+
+// --- Dev Utilities ---
+export const devGrantCoins = async (coins) => {
+  try {
+    const response = await apiClient.post('/dev/grant-coins/', { coins });
+    return response.data;
+  } catch (error) {
+    console.error('Error granting coins (dev):', error);
+    throw error;
+  }
+};
+
+// ===== ENHANCED MATCHING SYSTEM API FUNCTIONS =====
+
+// Like a user
+export const likeUser = async (userId) => {
+  try {
+    console.log('API: Sending like request for user:', userId);
+    const response = await apiClient.post('/matches/like/', { liked: userId });
+    console.log('API: Like response:', response.data);
+    console.log('API: Mutual match?', response.data.mutual_match);
+    console.log('API: Match data:', response.data.match_data);
+    return response.data;
+  } catch (error) {
+    console.error('API: Error liking user:', error);
+    console.error('API: Error details:', error.response?.data);
+    throw error;
+  }
+};
+
+// Get people I liked
+export const getPeopleILike = async () => {
+  try {
+    const response = await apiClient.get('/matches/people-i-like/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching people I like:', error);
+    throw error;
+  }
+};
+
+// Get people who liked me (with subscription gating)
+export const getPeopleWhoLikeMe = async () => {
+  try {
+    const response = await apiClient.get('/matches/people-who-like-me/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching people who like me:', error);
+    throw error;
+  }
+};
+
+// Get my matches
+export const getMyMatches = async () => {
+  try {
+    const response = await apiClient.get('/matches/my-matches/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching my matches:', error);
+    throw error;
+  }
+};
+
+// Get messages for a specific match
+export const getMatchMessages = async (matchId) => {
+  try {
+    const response = await apiClient.get(`/matches/${matchId}/messages/`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching match messages:', error);
+    throw error;
+  }
+};
+
+// Remove a like
+export const removeLike = async (likeId) => {
+  try {
+    const response = await apiClient.post('/matches/remove-like/', { like_id: likeId });
+    return response.data;
+  } catch (error) {
+    console.error('Error removing like:', error);
+    throw error;
+  }
+};
+
+// Get match details
+export const getMatchDetails = async (matchId) => {
+  try {
+    const response = await apiClient.get(`/matches/${matchId}/`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching match details:', error);
+    throw error;
+  }
+};
+
+// Send message in a match
+export const sendMatchMessage = async (matchId, content) => {
+  try {
+    const response = await apiClient.post(`/matches/${matchId}/send-message/`, { content });
+    return response.data;
+  } catch (error) {
+    console.error('Error sending message:', error);
+    throw error;
+  }
+};
+
 export default apiClient; // Export the instance for general use if needed

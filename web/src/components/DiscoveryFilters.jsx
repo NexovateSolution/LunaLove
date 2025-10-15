@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { FiSliders, FiX } from "react-icons/fi";
+import { FiSliders, FiX, FiHeart, FiMapPin, FiUser, FiGlobe } from "react-icons/fi";
 import Select from "react-select";
 import countryList from "react-select-country-list";
 import { religionOptions, genderOptions } from "../constants/appConstants";
+import apiClient from '../api';
 
 // City emoji mapping by first letter (for visual enhancement)
 const cityEmojiMap = {
@@ -88,9 +89,34 @@ export default function DiscoveryFilters({ open, onClose, filters, onChange, int
   const [selectedCountryCode, setSelectedCountryCode] = useState("");
   const [cityOptions, setCityOptions] = useState([{ value: "", label: "Any city" }]);
   const [isLoadingCities, setIsLoadingCities] = useState(false);
+  const [availableInterests, setAvailableInterests] = useState([]);
+  const [isLoadingInterests, setIsLoadingInterests] = useState(false);
   const geoNamesUsername = "nexovate"; // Your GeoNames username
 
   const countryOptions = useMemo(() => countryList().getData(), []);
+  
+  // Fetch interests from backend
+  useEffect(() => {
+    const fetchInterests = async () => {
+      if (availableInterests.length > 0) return; // Already loaded
+      
+      setIsLoadingInterests(true);
+      try {
+        const response = await apiClient.get('/interests/');
+        console.log('Fetched interests:', response.data);
+        setAvailableInterests(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch interests:', error);
+        setAvailableInterests([]);
+      } finally {
+        setIsLoadingInterests(false);
+      }
+    };
+    
+    if (open) {
+      fetchInterests();
+    }
+  }, [open, availableInterests.length]);
   
   useEffect(() => {
     if (localFilters.country) {
@@ -152,147 +178,237 @@ export default function DiscoveryFilters({ open, onClose, filters, onChange, int
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
-      <div className="bg-white/80 backdrop-blur-md rounded-xl p-6 w-full max-w-md shadow-2xl ring-1 ring-black/5 transform transition-all duration-300 ease-out scale-95 group-hover:scale-100">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold text-fuchsia-700 flex items-center">
-            <FiSliders className="mr-3" /> Discovery Filters
-          </h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-fuchsia-700">
-            <FiX size={24} />
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-3xl w-full max-w-lg shadow-2xl border border-gray-200 dark:border-slate-700 transform transition-all duration-300 ease-out">
+        {/* Header */}
+        <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-100 dark:border-slate-700">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl text-white">
+              <FiSliders size={20} />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">Discovery Filters</h2>
+          </div>
+          <button 
+            onClick={onClose} 
+            className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-xl transition-colors"
+          >
+            <FiX size={20} className="text-gray-500 dark:text-gray-400" />
           </button>
         </div>
 
         {/* Filters Form */}
-        <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-2">
+        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
           {/* Age Range */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">Age Range: {localFilters.ageMin} - {localFilters.ageMax}</label>
-            <div className="flex items-center gap-3">
-              <span>{localFilters.ageMin}</span>
-              <input
-                type="range"
-                min="18"
-                max="99"
-                value={localFilters.ageMin}
-                onChange={e => handleChange("ageMin", parseInt(e.target.value))}
-                className="w-full h-2 bg-fuchsia-200 rounded-lg appearance-none cursor-pointer accent-fuchsia-600"
-              />
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <FiHeart className="text-pink-500" size={16} />
+              <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                Age Range: {localFilters.ageMin} - {localFilters.ageMax}
+              </label>
             </div>
-            <div className="flex items-center gap-3 mt-2">
-            <span>{localFilters.ageMax}</span>
-              <input
-                type="range"
-                min="18"
-                max="99"
-                value={localFilters.ageMax}
-                onChange={e => handleChange("ageMax", parseInt(e.target.value))}
-                className="w-full h-2 bg-fuchsia-200 rounded-lg appearance-none cursor-pointer accent-fuchsia-600"
-              />
-            </div>
-          </div>
-
-          {/* Country */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">Country</label>
-            <Select
-              options={countryOptions}
-              value={countryOptions.find(opt => opt.label === localFilters.country)}
-              onChange={opt => handleChange("country", opt ? opt.label : "")}
-              className="w-full"
-              isClearable
-              placeholder="Select a country"
-              formatOptionLabel={(option) => (
-                <div className="flex items-center gap-2">
-                  <span>{countryFlagEmoji(option.value)}</span>
-                  <span>{option.label}</span>
-                </div>
-              )}
-            />
-          </div>
-
-          {/* City */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">City</label>
-            <Select
-              options={cityOptions}
-              value={cityOptions.find(opt => opt.value === localFilters.city)}
-              onChange={opt => handleChange("city", opt ? opt.value : "")}
-              className="w-full"
-              isClearable
-              placeholder={
-                isLoadingCities ? "Loading cities..." :
-                selectedCountryCode ? `Select city in ${localFilters.country}` :
-                "Select a country first"
-              }
-              isDisabled={!selectedCountryCode || isLoadingCities || cityOptions.length <= 1}
-              isLoading={isLoadingCities}
-              noOptionsMessage={() => 
-                isLoadingCities ? "Loading..." :
-                selectedCountryCode ? `No cities found for ${localFilters.country}` :
-                "Please select a country first"
-              }
-            />
-             <div className="text-xs text-gray-500 mt-1">
-              {!isLoadingCities && selectedCountryCode && cityOptions.length > 1 ? 
-                `${cityOptions.length - 1} cities available for ${localFilters.country}` : 
-                !isLoadingCities && selectedCountryCode ? "No cities listed for this country." : ""}
+            <div className="bg-gray-50 dark:bg-slate-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-gray-500 w-6">{localFilters.ageMin}</span>
+                <input
+                  type="range"
+                  min="18"
+                  max="99"
+                  value={localFilters.ageMin}
+                  onChange={e => handleChange("ageMin", parseInt(e.target.value))}
+                  className="flex-1 h-2 bg-gradient-to-r from-pink-200 to-purple-200 dark:from-pink-800 dark:to-purple-800 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                />
+                <span className="text-xs text-gray-400">Min</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-gray-500 w-6">{localFilters.ageMax}</span>
+                <input
+                  type="range"
+                  min="18"
+                  max="99"
+                  value={localFilters.ageMax}
+                  onChange={e => handleChange("ageMax", parseInt(e.target.value))}
+                  className="flex-1 h-2 bg-gradient-to-r from-pink-200 to-purple-200 dark:from-pink-800 dark:to-purple-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+                <span className="text-xs text-gray-400">Max</span>
+              </div>
             </div>
           </div>
 
-          {/* Gender */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">Gender</label>
-            <Select
-              options={genderOptions.map(opt => (
-                opt.value === "" ? opt : { ...opt, label: `${opt.label.split(' ')[0]} ${opt.label.split(' ').slice(1).join(' ')}` }
-              ))}
-              value={genderOptions.find(opt => opt.value === localFilters.gender) || { value: "", label: "Any" }}
-              onChange={opt => handleChange("gender", opt ? opt.value : "")}
-              className="w-full"
-            />
+          {/* Location */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <FiMapPin className="text-blue-500" size={16} />
+              <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Location</label>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Country</label>
+                <Select
+                  options={countryOptions}
+                  value={countryOptions.find(opt => opt.label === localFilters.country)}
+                  onChange={opt => handleChange("country", opt ? opt.label : "")}
+                  className="w-full"
+                  isClearable
+                  placeholder="Any country"
+                  formatOptionLabel={(option) => (
+                    <div className="flex items-center gap-2">
+                      <span>{countryFlagEmoji(option.value)}</span>
+                      <span>{option.label}</span>
+                    </div>
+                  )}
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      borderRadius: '12px',
+                      borderColor: '#e2e8f0',
+                      '&:hover': { borderColor: '#cbd5e1' }
+                    })
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">City</label>
+                <Select
+                  options={cityOptions}
+                  value={cityOptions.find(opt => opt.value === localFilters.city)}
+                  onChange={opt => handleChange("city", opt ? opt.value : "")}
+                  className="w-full"
+                  isClearable
+                  placeholder={
+                    isLoadingCities ? "Loading cities..." :
+                    selectedCountryCode ? "Any city" :
+                    "Select country first"
+                  }
+                  isDisabled={!selectedCountryCode || isLoadingCities || cityOptions.length <= 1}
+                  isLoading={isLoadingCities}
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      borderRadius: '12px',
+                      borderColor: '#e2e8f0',
+                      '&:hover': { borderColor: '#cbd5e1' }
+                    })
+                  }}
+                />
+                {!isLoadingCities && selectedCountryCode && cityOptions.length > 1 && (
+                  <div className="text-xs text-gray-400 mt-1">
+                    {cityOptions.length - 1} cities available
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Religion */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">Religion</label>
-            <Select
-              options={religionOptions.map(opt => (
-                opt.value === "" ? opt : { ...opt, label: `${opt.label.split(' ')[0]} ${opt.label.split(' ').slice(1).join(' ')}` }
-              ))}
-              value={religionOptions.find(opt => opt.value === localFilters.religion) || { value: "", label: "Any" }}
-              onChange={opt => handleChange("religion", opt ? opt.value : "")}
-              className="w-full"
-            />
+          {/* Preferences */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <FiUser className="text-green-500" size={16} />
+              <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">Preferences</label>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Gender</label>
+                <Select
+                  options={genderOptions}
+                  value={genderOptions.find(opt => opt.value === localFilters.gender) || { value: "", label: "Any" }}
+                  onChange={opt => handleChange("gender", opt ? opt.value : "")}
+                  className="w-full"
+                  placeholder="Any"
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      borderRadius: '12px',
+                      borderColor: '#e2e8f0',
+                      '&:hover': { borderColor: '#cbd5e1' }
+                    })
+                  }}
+                />
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Religion</label>
+                <Select
+                  options={religionOptions}
+                  value={religionOptions.find(opt => opt.value === localFilters.religion) || { value: "", label: "Any" }}
+                  onChange={opt => handleChange("religion", opt ? opt.value : "")}
+                  className="w-full"
+                  placeholder="Any"
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      borderRadius: '12px',
+                      borderColor: '#e2e8f0',
+                      '&:hover': { borderColor: '#cbd5e1' }
+                    })
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Interests */}
-          <div className="mb-4">
-            <label className="block text-sm font-semibold mb-1">Interests (select up to 5)</label>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <FiGlobe className="text-purple-500" size={16} />
+              <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                Interests {localFilters.interests?.length > 0 && `(${localFilters.interests.length}/5)`}
+              </label>
+            </div>
             <Select
               isMulti
-              options={interestsList.map(interest => ({ value: interest.name, label: `${interest.emoji} ${interest.name}` }))}
-              value={localFilters.interests.map(interest => {
-                const found = interestsList.find(i => i.name === interest);
-                return found ? { value: found.name, label: `${found.emoji} ${found.name}` } : null;
-              }).filter(Boolean)}
+              options={availableInterests.map(interest => ({ 
+                value: interest.name, 
+                label: `${interest.emoji || '🎯'} ${interest.name}` 
+              }))}
+              value={localFilters.interests?.map(interest => {
+                const found = availableInterests.find(i => i.name === interest);
+                return found ? { 
+                  value: found.name, 
+                  label: `${found.emoji || '🎯'} ${found.name}` 
+                } : null;
+              }).filter(Boolean) || []}
               onChange={selectedOptions => {
-                if (selectedOptions.length <= 5) {
+                if (selectedOptions && selectedOptions.length <= 5) {
                   handleChange("interests", selectedOptions.map(opt => opt.value));
                 }
               }}
               className="w-full"
-              placeholder="Select interests..."
+              placeholder={isLoadingInterests ? "Loading interests..." : "Select up to 5 interests..."}
+              isLoading={isLoadingInterests}
+              isDisabled={isLoadingInterests}
+              styles={{
+                control: (base) => ({
+                  ...base,
+                  borderRadius: '12px',
+                  borderColor: '#e2e8f0',
+                  '&:hover': { borderColor: '#cbd5e1' }
+                })
+              }}
             />
+            {availableInterests.length === 0 && !isLoadingInterests && (
+              <div className="text-xs text-gray-400">No interests available</div>
+            )}
           </div>
 
-          {/* Apply Filters Button */}
-          <button
-            onClick={handleApply}
-            className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 focus:ring-opacity-50"
-          >
-            Apply Filters
-          </button>
+        </div>
+        
+        {/* Footer */}
+        <div className="p-6 pt-4 border-t border-gray-100 dark:border-slate-700">
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 px-4 py-3 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-xl font-medium transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleApply}
+              className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+            >
+              Apply Filters
+            </button>
+          </div>
         </div>
       </div>
     </div>

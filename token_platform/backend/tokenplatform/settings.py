@@ -25,6 +25,15 @@ INSTALLED_APPS = [
     'apps.payments',
 ]
 
+# Optionally enable Jazzmin if available and desired
+if os.environ.get('ENABLE_JAZZMIN', '1') == '1':
+    try:
+        import jazzmin  # type: ignore  # noqa: F401
+        INSTALLED_APPS.insert(0, 'jazzmin')
+    except Exception:
+        # If Jazzmin isn't installed, skip without breaking dev server
+        pass
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -137,4 +146,57 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'gifts_send': os.environ.get('GIFTS_SEND_RATE', '10/min'),
     }
+}
+
+# Jazzmin admin UI configuration
+JAZZMIN_SETTINGS = {
+    "site_title": "Shebalove Admin",
+    "site_header": "Shebalove Platform",
+    "site_brand": "Shebalove",
+    "welcome_sign": "Welcome to Shebalove Admin",
+    "copyright": "Shebalove",
+    # Top menu shortcuts
+    "topmenu_links": [
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"app": "auth"},
+        {"app": "payments"},
+        {"name": "Users", "model": "auth.user"},
+        {"name": "Wallets", "model": "payments.wallet"},
+        {"name": "Payments", "model": "payments.payment"},
+    ],
+    # Icons for models
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.Group": "fas fa-users",
+        "payments": "fas fa-coins",
+        "payments.coinpackage": "fas fa-sack-dollar",
+        "payments.gift": "fas fa-gift",
+        "payments.wallet": "fas fa-wallet",
+        "payments.payment": "fas fa-credit-card",
+        "payments.receipt": "fas fa-file-invoice-dollar",
+        "payments.gifttransaction": "fas fa-hand-holding-heart",
+        "payments.withdrawalrequest": "fas fa-money-bill-transfer",
+        "payments.kycsubmission": "fas fa-id-card",
+        "payments.auditlog": "fas fa-clipboard-list",
+    },
+    # Related models to show from change form
+    "related_modal_active": True,
+    "show_ui_builder": False,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "theme": "darkly",  # dark theme
+    "navbar": "navbar-dark navbar-primary",
+    "dark_mode_theme": None,
+    "accent": "accent-teal",
+    "sidebar": "sidebar-dark-primary",
+    "brand_colors": {
+        "primary": "#6C63FF",
+        "accent": "#20c997",
+    },
+    "button_classes": {
+        "primary": "btn-primary", "secondary": "btn-secondary", "info": "btn-info",
+        "warning": "btn-warning", "danger": "btn-danger", "success": "btn-success"
+    },
 }

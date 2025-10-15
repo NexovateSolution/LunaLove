@@ -1,11 +1,13 @@
 from rest_framework import serializers
-from .models import User, UserPreference, Interest, UserPhoto, Swipe, Match
+from .models import (
+    User, UserPhoto, Interest, UserPreference, Swipe, Like, Message,
+    ChatbotConversation, ChatbotMessage, ChatMessage
+)
 from django.contrib.auth import get_user_model
 from django.utils.crypto import get_random_string
 from datetime import date
 
 User = get_user_model()
-
 class InterestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Interest
@@ -122,28 +124,31 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
 
 
 class UserPhotoSerializer(serializers.ModelSerializer):
-    # The 'photo' field will now be a read-only field that returns the full URL.
-    photo = serializers.SerializerMethodField(source='get_photo')
+    # Use 'photo' as the write/read field mapped to model's 'photo_url'
+    photo = serializers.ImageField(source='photo_url', required=True)
 
     class Meta:
         model = UserPhoto
-        # We only need to expose the 'photo' field with the full URL.
-        # 'photo_url' is removed as it's now redundant.
         fields = ['id', 'photo', 'is_avatar', 'upload_order']
-        read_only_fields = ['id', 'photo', 'is_avatar', 'upload_order']
+        read_only_fields = ['id', 'is_avatar', 'upload_order']
 
-    def get_photo(self, obj):
-        """
-        Returns the absolute URL for the photo.
-        """
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # Convert 'photo' to an absolute URL
         request = self.context.get('request')
-        if request and obj.photo_url:
-            return request.build_absolute_uri(obj.photo_url.url)
-        return None
+        try:
+            if instance.photo_url:
+                url = instance.photo_url.url
+                rep['photo'] = request.build_absolute_uri(url) if request else url
+            else:
+                rep['photo'] = None
+        except Exception:
+            pass
+        return rep
 
     def create(self, validated_data):
         validated_data['user'] = self.context['request'].user
-        return UserPhoto.objects.create(**validated_data)
+        return super().create(validated_data)
 
 
 class SwipeSerializer(serializers.ModelSerializer):
@@ -189,6 +194,9 @@ class UserSerializer(serializers.ModelSerializer):
     # Add fields to match frontend expectations, using 'source' to map to model fields
     drinking_habits = serializers.CharField(source='drinks_alcohol', read_only=True, allow_null=True)
     smoking_habits = serializers.CharField(source='smokes', read_only=True, allow_null=True)
+    # Writable counterparts so PATCH /user/me/ can set them
+    drinks_alcohol = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    smokes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     
     interests = InterestSerializer(many=True, read_only=True)
 
@@ -200,9 +208,14 @@ class UserSerializer(serializers.ModelSerializer):
             'location_latitude', 'location_longitude', 
             'country', 'city', 
             'relationship_intent', 'religion', 'relationship_type', 
-            'drinking_habits', 'smoking_habits', # Use new field names
+            'drinking_habits', 'smoking_habits', # Read-only aliases for display
+            'drinks_alcohol', 'smokes',          # Writable fields
             'profile_completeness_score', 'interests', 'last_login', 
             'is_active', 'date_joined', 'updated_at', 'accepted_terms_and_conditions',
+            # Subscription/perk fields
+            'is_premium',
+            'has_boost', 'can_see_likes', 'ad_free',
+            'boost_expiry', 'likes_reveal_expiry', 'ad_free_expiry',
             'user_photos'  # This is correctly included
         ]
         read_only_fields = ['id', 'last_login', 'is_active', 'date_joined', 'updated_at', 'profile_completeness_score']
@@ -231,25 +244,112 @@ class PotentialMatchSerializer(serializers.ModelSerializer):
         return None
 
 
-class MatchSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the Match model.
-    It dynamically serializes the *other* user in the match.
-    """
-    other_user = serializers.SerializerMethodField()
+# MatchSerializer removed - using LikeSerializer for matches
+
+class LikeSerializer(serializers.ModelSerializer):
+    liker = UserSerializer(read_only=True)
+    liked = UserSerializer(read_only=True)
     
     class Meta:
-        model = Match
-        fields = ['id', 'other_user', 'matched_at', 'is_active']
+        model = Like
+        fields = ['id', 'liker', 'liked', 'status', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
-    def get_other_user(self, obj):     
-        """
-        Returns the user in the match who is not the current request user.
-        """
+
+class LikeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Like
+        fields = ['liked']
+        
+    def create(self, validated_data):
+        validated_data['liker'] = self.context['request'].user
+        liker = validated_data['liker']
+        liked = validated_data['liked']
+        
+        # Check if a like already exists
+        existing_like = Like.objects.filter(liker=liker, liked=liked).first()
+        
+        if existing_like:
+            if existing_like.status == Like.LikeStatus.REMOVED:
+                # Re-activate the removed like
+                existing_like.status = Like.LikeStatus.LIKED
+                existing_like.save()
+                return existing_like
+            else:
+                # Like already exists and is active
+                raise serializers.ValidationError({'error': 'You have already liked this user'})
+        
+        # Create new like
+        return super().create(validated_data)
+
+
+class PeopleWhoLikeMeSerializer(serializers.ModelSerializer):
+    """Serializer for people who liked the current user - with subscription gating"""
+    user_profile = serializers.SerializerMethodField()
+    is_blurred = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Like
+        fields = ['id', 'user_profile', 'is_blurred', 'created_at']
+        
+    def get_user_profile(self, obj):
         current_user = self.context['request'].user
-        if obj.user1 == current_user:
-            # The other user is user2
-            return UserSerializer(obj.user2, context=self.context).data
+        
+        # Check if this is a mutual match (user should not see mutual matches in "who likes me")
+        is_mutual_match = obj.status == Like.LikeStatus.MATCHED
+        
+        # Check if user has likes reveal subscription and it's not a mutual match
+        if current_user.can_see_likes and not is_mutual_match:
+            return UserSerializer(obj.liker, context=self.context).data
         else:
-            # The other user is user1
-            return UserSerializer(obj.user1, context=self.context).data
+            # Return blurred/limited profile for non-subscribers or mutual matches
+            blur_reason = 'You matched! Check your matches section.' if is_mutual_match else 'Subscribe to see who liked you!'
+            return {
+                'id': 'blurred',
+                'first_name': '***',
+                'photos': [],
+                'age': '**',
+                'bio': blur_reason
+            }
+    
+    def get_is_blurred(self, obj):
+        current_user = self.context['request'].user
+        is_mutual_match = obj.status == Like.LikeStatus.MATCHED
+        return not current_user.can_see_likes or is_mutual_match
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    """Serializer for messages between matched users"""
+    sender_name = serializers.CharField(source='sender.first_name', read_only=True)
+    sender_id = serializers.UUIDField(source='sender.id', read_only=True)
+    
+    class Meta:
+        model = Message
+        fields = ['id', 'content', 'sent_at', 'sender', 'sender_name', 'sender_id']
+        read_only_fields = ['id', 'sent_at', 'sender', 'sender_name', 'sender_id']
+
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    """Serializer for chat messages between matched users"""
+    sender_name = serializers.CharField(source='sender.first_name', read_only=True)
+    
+    class Meta:
+        model = ChatMessage
+        fields = ['id', 'content', 'timestamp', 'sender', 'sender_name', 'is_read']
+        read_only_fields = ['id', 'timestamp', 'sender', 'sender_name']
+
+
+class ChatbotConversationSerializer(serializers.ModelSerializer):
+    """Serializer for chatbot conversations"""
+    class Meta:
+        model = ChatbotConversation
+        fields = ['id', 'user', 'started_at', 'last_message_at', 'is_active']
+        read_only_fields = ['id', 'started_at', 'last_message_at']
+
+
+class ChatbotMessageSerializer(serializers.ModelSerializer):
+    """Serializer for chatbot messages"""
+    class Meta:
+        model = ChatbotMessage
+        fields = ['id', 'conversation', 'sender_type', 'message_text', 'timestamp', 'feedback']
+        read_only_fields = ['id', 'timestamp']
