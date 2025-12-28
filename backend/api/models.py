@@ -403,7 +403,8 @@ class Message(models.Model):
         ordering = ['sent_at']
 
     def __str__(self):
-        return f"Message from {self.sender.username} in match {self.match.id}"
+        return f"Message from {self.sender.username} to {self.receiver.username} in match {self.match.id}"
+
 
 class ChatbotConversation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -453,3 +454,232 @@ class ChatMessage(models.Model):
     
     def __str__(self):
         return f"Message from {self.sender.first_name} at {self.timestamp}"
+
+
+# ===== GIFT AND PAYMENT SYSTEM MODELS =====
+
+class CoinPackage(models.Model):
+    """Predefined coin packages for purchase"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)  # e.g., "Starter Pack", "Premium Pack"
+    coins = models.IntegerField()  # Number of coins in this package
+    price_etb = models.DecimalField(max_digits=10, decimal_places=2)  # Price in Ethiopian Birr
+    bonus_coins = models.IntegerField(default=0)  # Extra coins for this package
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['price_etb']
+    
+    def __str__(self):
+        return f"{self.name} - {self.coins} coins for {self.price_etb} ETB"
+    
+    @property
+    def total_coins(self):
+        return self.coins + self.bonus_coins
+
+
+class UserWallet(models.Model):
+    """User's coin wallet"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='coin_wallet')
+    coins = models.IntegerField(default=0)
+    total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # Total ETB spent
+    total_earned = models.DecimalField(max_digits=12, decimal_places=2, default=0)  # Total ETB earned from gifts
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.user.username}'s wallet - {self.coins} coins"
+
+
+class CoinPurchase(models.Model):
+    """Records of coin purchases - payment provider to be integrated"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='coin_purchases')
+    package = models.ForeignKey(CoinPackage, on_delete=models.CASCADE)
+    amount_etb = models.DecimalField(max_digits=10, decimal_places=2)
+    coins_purchased = models.IntegerField()
+    
+    # Payment transaction details (provider-agnostic)
+    transaction_ref = models.CharField(max_length=100, unique=True)
+    payment_method = models.CharField(max_length=50, blank=True, null=True)  # To be populated by payment provider
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.coins_purchased} coins for {self.amount_etb} ETB"
+
+
+class SubscriptionPurchase(models.Model):
+    """Records of subscription/premium plan purchases"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='subscription_purchases')
+    
+    # Plan details
+    PLAN_CHOICES = [
+        ('BOOST', 'Boost Plan'),
+        ('LIKES_REVEAL', 'Likes Reveal Plan'),
+        ('AD_FREE', 'Ad-Free Plan'),
+    ]
+    plan_code = models.CharField(max_length=20, choices=PLAN_CHOICES)
+    plan_name = models.CharField(max_length=100)
+    amount_etb = models.DecimalField(max_digits=10, decimal_places=2)
+    duration_days = models.IntegerField(default=30)
+    
+    # Payment transaction details (provider-agnostic)
+    transaction_ref = models.CharField(max_length=100, unique=True)
+    payment_method = models.CharField(max_length=50, blank=True, null=True)
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.plan_name} for {self.amount_etb} ETB"
+
+
+class UserSubaccount(models.Model):
+    """Chapa subaccount for receiving gift earnings"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='subaccount')
+    
+    # Bank account details
+    bank_code = models.CharField(max_length=10)  # Bank ID from Chapa
+    bank_name = models.CharField(max_length=100)
+    account_number = models.CharField(max_length=50)
+    account_name = models.CharField(max_length=200)
+    
+    # Chapa subaccount details
+    subaccount_id = models.CharField(max_length=100, unique=True)  # From Chapa API
+    split_type = models.CharField(max_length=20, default='percentage')  # 'percentage' or 'flat'
+    split_value = models.DecimalField(max_digits=10, decimal_places=4, default=0.70)  # 70% to receiver
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    is_verified = models.BooleanField(default=False)
+    
+    # Earnings tracking
+    total_earnings_etb = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_withdrawn_etb = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.username}'s subaccount - {self.bank_name}"
+    
+    @property
+    def available_balance(self):
+        """Calculate available balance for withdrawal"""
+        return self.total_earnings_etb - self.total_withdrawn_etb
+
+
+class GiftType(models.Model):
+    """Available gift types"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)  # e.g., "Rose", "Diamond", "Crown"
+    description = models.TextField(blank=True)
+    icon = models.CharField(max_length=10)  # Emoji or icon code
+    coin_cost = models.IntegerField()  # Cost in coins
+    etb_value = models.DecimalField(max_digits=8, decimal_places=2)  # Real money value
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['coin_cost']
+    
+    def __str__(self):
+        return f"{self.icon} {self.name} - {self.coin_cost} coins"
+
+
+class GiftTransaction(models.Model):
+    """Records of gifts sent between users"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gifts_sent')
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gifts_received')
+    gift_type = models.ForeignKey(GiftType, on_delete=models.CASCADE)
+    quantity = models.IntegerField(default=1)
+    
+    # Financial details
+    total_coins = models.IntegerField()  # Total coins spent
+    total_etb_value = models.DecimalField(max_digits=10, decimal_places=2)  # Total ETB value
+    platform_cut_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=30.00)  # Platform's cut %
+    platform_cut_etb = models.DecimalField(max_digits=10, decimal_places=2)  # Platform's cut in ETB
+    receiver_share_etb = models.DecimalField(max_digits=10, decimal_places=2)  # Receiver's share in ETB
+    
+    # Chapa split payment details
+    chapa_tx_ref = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    split_payment_processed = models.BooleanField(default=False)
+    
+    message = models.TextField(blank=True)  # Optional message with gift
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def save(self, *args, **kwargs):
+        from decimal import Decimal
+        
+        if not self.total_coins:
+            self.total_coins = self.gift_type.coin_cost * self.quantity
+        if not self.total_etb_value:
+            self.total_etb_value = self.gift_type.etb_value * self.quantity
+        if not self.platform_cut_etb:
+            self.platform_cut_etb = self.total_etb_value * (Decimal(str(self.platform_cut_percentage)) / Decimal('100'))
+        if not self.receiver_share_etb:
+            self.receiver_share_etb = self.total_etb_value - self.platform_cut_etb
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.sender.username} → {self.receiver.username}: {self.quantity}x {self.gift_type.name}"
+
+
+class PlatformSettings(models.Model):
+    """Platform-wide settings for the gift system"""
+    # Owner's bank account for receiving platform cuts
+    owner_bank_code = models.CharField(max_length=10, default="")
+    owner_account_number = models.CharField(max_length=50, default="")
+    owner_account_name = models.CharField(max_length=100, default="")
+    owner_business_name = models.CharField(max_length=100, default="LunaLove Platform")
+    
+    # Default platform cut percentage
+    default_platform_cut = models.DecimalField(max_digits=5, decimal_places=2, default=30.00)
+    
+    # Minimum withdrawal amount for users
+    min_withdrawal_etb = models.DecimalField(max_digits=10, decimal_places=2, default=100.00)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Platform Settings"
+        verbose_name_plural = "Platform Settings"
+    
+    def __str__(self):
+        return f"Platform Settings - {self.default_platform_cut}% cut"
+    
+    def save(self, *args, **kwargs):
+        # Ensure only one instance exists
+        if not self.pk and PlatformSettings.objects.exists():
+            raise ValueError("Only one PlatformSettings instance is allowed")
+        super().save(*args, **kwargs)

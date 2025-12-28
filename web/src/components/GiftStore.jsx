@@ -14,15 +14,13 @@ export default function GiftStore({ onClose, onSend }) {
         setError(null);
         const data = await getGifts();
         if (!mounted) return;
-        // Backend gift shape: { id, name, coins, value_etb }
-        // We’ll derive an icon for display when not provided
+        // Backend gift shape: { id, name, coin_cost, etb_value, icon }
         const mapped = (data || []).map((g, i) => ({
           id: g.id,
           name: g.name,
-          coins: Number(g.coins) || 0,
-          value_etb: g.value_etb,
-          icon: g.gift_icon || deriveIcon(g.name, i),
-          animation: g.gift_animation_type || deriveAnimation(g.name),
+          coins: Number(g.coin_cost) || 0,
+          value_etb: g.etb_value,
+          icon: g.icon || deriveIcon(g.name, i),
         }));
         setGifts(mapped);
       } catch (e) {
@@ -35,83 +33,84 @@ export default function GiftStore({ onClose, onSend }) {
     return () => { mounted = false; };
   }, []);
 
-  const handleSend = (gift) => {
-    // Pass full gift object so caller can access gift.id for backend call
-    if (onSend) onSend(gift);
+  const deriveIcon = (name, index) => {
+    const icons = ["🌹", "💎", "🎁", "❤️", "🌟", "🎉", "💝", "🏆"];
+    if (name?.toLowerCase().includes("rose")) return "🌹";
+    if (name?.toLowerCase().includes("diamond")) return "💎";
+    if (name?.toLowerCase().includes("heart")) return "❤️";
+    if (name?.toLowerCase().includes("star")) return "🌟";
+    return icons[index % icons.length];
   };
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-sm sm:max-w-md max-h-[80vh] p-4 sm:p-6 flex flex-col">
-        <h2 className="text-xl font-bold mb-3 text-fuchsia-600">Send a Gift</h2>
-        {loading && <div className="text-sm text-gray-500 dark:text-gray-400 mb-2">Loading gifts...</div>}
-        {error && <div className="text-sm text-red-500 mb-2">{error}</div>}
-        <div className="flex-1 overflow-y-auto">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mb-3 pr-1">
-            {gifts.map(gift => (
-              <button
-                key={gift.id}
-                className="flex flex-col items-center p-3 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-fuchsia-100 dark:hover:bg-fuchsia-900 transition"
-                onClick={() => handleSend(gift)}
-              >
-                <span className="text-3xl">{gift.icon}</span>
-                <span className="font-semibold mt-1">{gift.name}</span>
-                <span className="text-xs text-fuchsia-500 mt-1">{gift.coins} coins</span>
-              </button>
-            ))}
-            {!loading && !error && gifts.length === 0 && (
-              <div className="col-span-2 sm:col-span-3 text-sm text-gray-500 dark:text-gray-400 text-center">No gifts available.</div>
-            )}
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+            <p className="mt-2 text-gray-600">Loading gifts...</p>
           </div>
         </div>
-        <button className="mt-2 w-full py-2 rounded bg-fuchsia-500 text-white font-semibold" onClick={onClose}>
-          Cancel
-        </button>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+          <div className="text-center">
+            <p className="text-red-600 mb-4">{error}</p>
+            <button
+              onClick={onClose}
+              className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold text-gray-800">Send a Gift</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-2xl"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          {gifts.map((gift) => (
+            <button
+              key={gift.id}
+              onClick={() => onSend && onSend(gift)}
+              className="bg-gradient-to-br from-purple-50 to-pink-50 hover:from-purple-100 hover:to-pink-100 border border-purple-200 rounded-lg p-4 text-center transition-all duration-200 hover:scale-105"
+            >
+              <div className="text-3xl mb-2">{gift.icon}</div>
+              <div className="font-semibold text-gray-800 text-sm">{gift.name}</div>
+              <div className="text-purple-600 text-xs font-medium">
+                {gift.coins} coins
+              </div>
+              <div className="text-green-600 text-xs">
+                {gift.value_etb} ETB
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {gifts.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-gray-500">No gifts available</p>
+          </div>
+        )}
       </div>
     </div>
   );
-}
-
-function deriveIcon(name, idx) {
-  const map = {
-    rose: "🌹",
-    diamond: "💎",
-    coffee: "☕",
-    heart: "❤️",
-    chocolate: "🍫",
-    teddy: "🧸",
-    ring: "💍",
-  };
-  const key = String(name || '').toLowerCase();
-  for (const k of Object.keys(map)) {
-    if (key.includes(k)) return map[k];
-  }
-  const fallback = ["🎁", "🎀", "💐", "✨", "💖", "🎉"]; 
-  return fallback[idx % fallback.length];
-}
-
-function deriveAnimation(name) {
-  const key = String(name || '').toLowerCase();
-  const pairs = [
-    ["love note", "envelope_fly"],
-    ["single rose", "rose_bloom"],
-    ["rose", "rose_bloom"],
-    ["chocolate", "chocolate_hearts"],
-    ["teddy", "teddy_wave"],
-    ["romantic song", "music_notes"],
-    ["song", "music_notes"],
-    ["candlelight dinner", "wine_clink"],
-    ["bouquet", "roses_rain"],
-    ["photo frame", "photo_frame"],
-    ["kiss", "kiss_blow"],
-    ["perfume", "perfume_spray"],
-    ["ring", "ring_sparkle"],
-    ["weekend getaway", "plane_hearts"],
-    ["car ride", "car_hearts"],
-    ["home", "home_glow"],
-  ];
-  for (const [substr, anim] of pairs) {
-    if (key.includes(substr)) return anim;
-  }
-  return "grow_fade";
 }

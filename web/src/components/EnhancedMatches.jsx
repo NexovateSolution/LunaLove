@@ -629,7 +629,7 @@ const EnhancedMatches = ({ onChat, onNavigate }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+    <div className="h-full overflow-y-auto bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
       <div className="bg-white dark:bg-slate-800 shadow-sm border-b border-gray-200 dark:border-slate-700">
         <div className="max-w-6xl mx-auto px-4 py-6">
@@ -655,7 +655,7 @@ const EnhancedMatches = ({ onChat, onNavigate }) => {
       </div>
 
       {/* Content */}
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 py-8 pb-24">
         {renderContent()}
       </div>
 

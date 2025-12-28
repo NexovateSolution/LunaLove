@@ -100,17 +100,17 @@ export const getCoinPackages = async () => {
 
 export const createTopUp = async (packageId) => {
   try {
-    const response = await apiClient.post('/coins/topup/', { package_id: packageId });
+    const response = await apiClient.post('/coins/purchase/', { package_id: packageId });
     return response.data;
   } catch (error) {
-    console.error('Error creating top-up:', error);
+    console.error('Error creating coin purchase:', error);
     throw error;
   }
 };
 
 export const getWallet = async () => {
   try {
-    const response = await apiClient.get('/wallet/');
+    const response = await apiClient.get('/coins/wallet/');
     return response.data;
   } catch (error) {
     console.error('Error fetching wallet:', error);
@@ -152,7 +152,7 @@ export const activateSubscription = async (planId) => {
 // --- Gifts ---
 export const getGifts = async () => {
   try {
-    const response = await apiClient.get('/gifts/');
+    const response = await apiClient.get('/gifts/types/');
     return response.data;
   } catch (error) {
     console.error('Error fetching gifts:', error);
@@ -160,12 +160,53 @@ export const getGifts = async () => {
   }
 };
 
-export const sendGift = async (recipientId, giftId) => {
+export const sendGift = async (recipientId, giftTypeId, quantity = 1, message = '') => {
   try {
-    const response = await apiClient.post('/gifts/send/', { recipient_id: recipientId, gift_id: giftId });
+    const response = await apiClient.post('/gifts/send/', { 
+      receiver_id: recipientId, 
+      gift_type_id: giftTypeId,
+      quantity: quantity,
+      message: message
+    });
     return response.data;
   } catch (error) {
     console.error('Error sending gift:', error);
+    throw error;
+  }
+};
+
+// --- Gift History ---
+export const getGiftHistory = async (type = 'all') => {
+  try {
+    const response = await apiClient.get(`/gifts/history/?type=${type}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching gift history:', error);
+    throw error;
+  }
+};
+
+// --- Bank Account Management ---
+export const getBanks = async () => {
+  try {
+    const response = await apiClient.get('/banks/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching banks:', error);
+    throw error;
+  }
+};
+
+export const createSubAccount = async (bankCode, accountNumber, accountName) => {
+  try {
+    const response = await apiClient.post('/subaccount/create/', {
+      bank_code: bankCode,
+      account_number: accountNumber,
+      account_name: accountName
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error creating subaccount:', error);
     throw error;
   }
 };

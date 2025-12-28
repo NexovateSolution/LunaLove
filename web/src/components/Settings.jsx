@@ -3,13 +3,13 @@ import {
   FiLogOut, FiArrowUpCircle, FiMoon, FiSun, FiUser, FiCheckCircle, 
   FiShield, FiBell, FiHeart, FiEye, FiLock, FiTrash2, FiSettings,
   FiHelpCircle, FiMail, FiPhone, FiMapPin, FiVolume2, FiVolumeX,
-  FiChevronRight, FiInfo, FiStar, FiGift
+  FiChevronRight, FiInfo, FiStar, FiGift, FiDollarSign
 } from "react-icons/fi";
 import ProfileVerificationModal from "./ProfileVerificationModal";
 
 import { deleteAccount } from '../api';
 
-export default function Settings({ onLogout, onUpgrade, isDark, onToggleDark, giftSoundsEnabled = true, onToggleGiftSounds, onRerunSetup }) {
+export default function Settings({ onLogout, onUpgrade, isDark, onToggleDark, giftSoundsEnabled = true, onToggleGiftSounds, onRerunSetup, onNavigate }) {
 
   const [user, setUser] = useState({ verified: false });
   const [showVerify, setShowVerify] = useState(false);
@@ -112,6 +112,50 @@ export default function Settings({ onLogout, onUpgrade, isDark, onToggleDark, gi
                 </div>
                 <FiChevronRight className="text-gray-400" />
               </button>
+            </div>
+          </div>
+
+          {/* Earnings & Bank Account Section */}
+          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-lg border border-gray-200 dark:border-slate-700 overflow-hidden">
+            <div className="p-6 border-b border-gray-200 dark:border-slate-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <FiDollarSign className="text-green-500" />
+                Earnings & Bank Account
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border border-green-200 dark:border-green-800">
+                <div className="flex items-start gap-3 mb-3">
+                  <FiGift className="text-green-600 dark:text-green-400 text-xl mt-1" />
+                  <div>
+                    <div className="font-semibold text-green-900 dark:text-green-100">Earn from Gifts</div>
+                    <div className="text-sm text-green-700 dark:text-green-300 mt-1">
+                      Receive 70% of gift values directly to your bank account!
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                className="w-full flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white transition-all duration-200 transform hover:scale-105"
+                onClick={() => {
+                  if (onNavigate) {
+                    onNavigate('earnings');
+                  } else {
+                    alert('Earnings dashboard coming soon! This will show your gift earnings and bank account setup.');
+                  }
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <FiDollarSign className="text-xl" />
+                  <span className="font-semibold">View Earnings & Setup Bank</span>
+                </div>
+                <FiChevronRight />
+              </button>
+
+              <div className="text-xs text-gray-500 dark:text-gray-400 text-center">
+                Set up your bank account to start receiving earnings from gifts
+              </div>
             </div>
           </div>
 

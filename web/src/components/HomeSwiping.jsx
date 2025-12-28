@@ -242,9 +242,9 @@ const HomeSwiping = ({ onMatch, onGift, onChatToggle }) => {
       </div>
 
       {/* Main content area for the profile card */}
-      <div className="w-full flex-grow flex items-center justify-center px-4">
+      <div className="w-full flex-grow flex items-center justify-center px-4 pb-24">
         {currentProfile ? (
-          <div className="relative w-full max-w-sm h-[75vh] bg-white dark:bg-slate-800 rounded-3xl shadow-2xl overflow-hidden">
+          <div className="relative w-full max-w-sm h-[70vh] bg-white dark:bg-slate-800 rounded-3xl shadow-2xl overflow-hidden">
             {/* Main image container - takes most of the space */}
             <div className="relative w-full h-[75%] bg-gradient-to-br from-gray-200 to-gray-300 dark:from-slate-600 dark:to-slate-700">
               {currentProfile.user_photos && currentProfile.user_photos.length > 0 ? (

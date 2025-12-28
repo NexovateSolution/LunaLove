@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import (
     User, UserPhoto, Interest, UserPreference, Swipe, Like, Message,
-    ChatbotConversation, ChatbotMessage, ChatMessage
+    ChatbotConversation, ChatbotMessage, ChatMessage,
+    CoinPackage, UserWallet, CoinPurchase, GiftType, GiftTransaction, PlatformSettings
 )
 from django.contrib.auth import get_user_model
 from django.utils.crypto import get_random_string
@@ -353,3 +354,82 @@ class ChatbotMessageSerializer(serializers.ModelSerializer):
         model = ChatbotMessage
         fields = ['id', 'conversation', 'sender_type', 'message_text', 'timestamp', 'feedback']
         read_only_fields = ['id', 'timestamp']
+
+
+# ===== GIFT AND PAYMENT SYSTEM SERIALIZERS =====
+
+class CoinPackageSerializer(serializers.ModelSerializer):
+    """Serializer for coin packages"""
+    total_coins = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = CoinPackage
+        fields = ['id', 'name', 'coins', 'price_etb', 'bonus_coins', 'total_coins', 'is_active']
+
+
+class UserWalletSerializer(serializers.ModelSerializer):
+    """Serializer for user wallet"""
+    class Meta:
+        model = UserWallet
+        fields = ['coins', 'total_spent', 'total_earned', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+# ChapaSubAccountSerializer removed - payment provider to be integrated
+
+
+class CoinPurchaseSerializer(serializers.ModelSerializer):
+    """Serializer for coin purchases"""
+    package_name = serializers.CharField(source='package.name', read_only=True)
+    
+    class Meta:
+        model = CoinPurchase
+        fields = ['id', 'package', 'package_name', 'amount_etb', 'coins_purchased', 'transaction_ref', 'payment_method', 'status', 'created_at', 'completed_at']
+        read_only_fields = ['id', 'transaction_ref', 'created_at', 'completed_at']
+
+
+class GiftTypeSerializer(serializers.ModelSerializer):
+    """Serializer for gift types"""
+    class Meta:
+        model = GiftType
+        fields = ['id', 'name', 'description', 'icon', 'coin_cost', 'etb_value', 'is_active']
+
+
+class GiftTransactionSerializer(serializers.ModelSerializer):
+    """Serializer for gift transactions"""
+    sender_name = serializers.CharField(source='sender.first_name', read_only=True)
+    receiver_name = serializers.CharField(source='receiver.first_name', read_only=True)
+    gift_name = serializers.CharField(source='gift_type.name', read_only=True)
+    gift_icon = serializers.CharField(source='gift_type.icon', read_only=True)
+    
+    class Meta:
+        model = GiftTransaction
+        fields = [
+            'id', 'sender', 'receiver', 'sender_name', 'receiver_name',
+            'gift_type', 'gift_name', 'gift_icon', 'quantity',
+            'total_coins', 'total_etb_value', 'platform_cut_percentage',
+            'platform_cut_etb', 'receiver_share_etb', 'message', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'sender_name', 'receiver_name', 'gift_name', 'gift_icon',
+            'total_coins', 'total_etb_value', 'platform_cut_etb', 'receiver_share_etb', 'created_at'
+        ]
+
+
+class SendGiftSerializer(serializers.Serializer):
+    """Serializer for sending gifts"""
+    receiver_id = serializers.UUIDField()
+    gift_type_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1, max_value=100)
+    message = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+
+class PlatformSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for platform settings"""
+    class Meta:
+        model = PlatformSettings
+        fields = [
+            'owner_bank_code', 'owner_account_number', 'owner_account_name',
+            'owner_business_name', 'default_platform_cut', 'min_withdrawal_etb', 'updated_at'
+        ]
+        read_only_fields = ['updated_at']

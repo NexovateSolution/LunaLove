@@ -1,9 +1,9 @@
-import { FiHome, FiUser, FiSettings, FiMessageCircle, FiCreditCard } from "react-icons/fi";
+import { FiHome, FiUser, FiSettings, FiMessageCircle, FiCreditCard, FiGift } from "react-icons/fi";
 
 const navs = [
   { key: "home", label: "Home", icon: <FiHome size={24} /> },
   { key: "matches", label: "Matches", icon: <FiMessageCircle size={24} /> },
-  { key: "purchase", label: "Purchase", icon: <FiCreditCard size={24} /> },
+  { key: "purchase", label: "Premium", icon: <FiCreditCard size={24} /> },
   { key: "profile", label: "Profile", icon: <FiUser size={24} /> },
   { key: "settings", label: "Settings", icon: <FiSettings size={24} /> },
 ];

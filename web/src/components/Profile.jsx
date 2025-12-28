@@ -129,7 +129,7 @@ const useSelectStyles = () => {
   return selectStyles;
 };
 
-export default function Profile({ user, onSave }) {
+export default function Profile({ user, onSave, onNavigate }) {
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState(user);
   const [photos, setPhotos] = useState(user.user_photos || []);
@@ -411,8 +411,8 @@ export default function Profile({ user, onSave }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      <div className="relative w-full max-w-2xl mx-auto bg-white dark:bg-slate-800 shadow-xl">
+    <div className="h-full overflow-y-auto bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+      <div className="relative w-full max-w-2xl mx-auto bg-white dark:bg-slate-800 shadow-xl pb-24">
         {/* Cover Photo Area */}
         <div className="relative h-48 bg-gradient-to-r from-purple-400 via-pink-500 to-rose-500 dark:from-purple-800 dark:via-pink-800 dark:to-rose-800">
           <div className="absolute inset-0 bg-black/20"></div>

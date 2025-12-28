@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "LunaLove",
+    "slug": "lunalove",
+    "scheme": "lunalove",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF4458"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.lunalove.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "LunaLove needs access to your camera to take profile photos.",
+        "NSPhotoLibraryUsageDescription": "LunaLove needs access to your photo library to upload profile photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF4458"
+      },
+      "package": "com.lunalove.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ],
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a68adcee-10b2-4a47-9ebf-053322ad296a"
+      }
+    }
+  }
+}

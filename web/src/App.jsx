@@ -7,6 +7,7 @@ import ProfileSetup from "./components/ProfileSetup";
 import HomeSwiping from "./components/HomeSwiping";
 import Chat from "./components/Chat";
 import GiftStore from "./components/GiftStore";
+import GiftsDashboard from "./components/GiftsDashboard";
 import NavigationBar from "./components/NavigationBar";
 import Profile from "./components/Profile";
 import Matches from "./components/Matches";
@@ -15,9 +16,12 @@ import EnhancedMatches from "./components/EnhancedMatches";
 // import NotificationSystem from "./components/NotificationSystem";
 import Settings from "./components/Settings";
 import Upgrade from "./components/Upgrade";
-import PurchasePage from './components/PurchasePage';
+import UnifiedPurchasePage from './components/UnifiedPurchasePage';
 import PurchaseSuccess from './components/PurchaseSuccess';
 import BuyCoinsPage from './components/BuyCoinsPage';
+import CoinPurchaseReceipt from './components/CoinPurchaseReceipt';
+import PaymentReturn from './components/PaymentReturn';
+import EarningsDashboard from './components/EarningsDashboard';
 import useDarkMode from "./hooks/useDarkMode";
 import { FiLoader } from 'react-icons/fi';
 import { GoogleOAuthProvider } from '@react-oauth/google';
@@ -146,9 +150,29 @@ export default function App() {
           const hp = new URLSearchParams(queryPart || '');
           const refFromHash = hp.get('tx_ref') || hp.get('trx_ref') || hp.get('reference') || hp.get('transaction_id') || hp.get('transactionId');
           const statusParam = (sp.get('status') || hp.get('status') || '').toLowerCase();
-          const shouldGoPurchaseSuccess = path.startsWith('/purchase-success') || hash.includes('purchase-success') || !!directRef || !!refFromHash || statusParam === 'success' || statusParam === 'successful';
+          const shouldGoPaymentReturn = path.startsWith('/coins/payment-return') || hash.includes('coins/payment-return') || hash.includes('#/coins/payment-return');
+          const shouldGoReceipt = path.startsWith('/coins/receipt') || hash.includes('coins/receipt') || hash.includes('#/coins/receipt');
+          const shouldGoPurchaseSuccess = (path.startsWith('/purchase-success') || hash.includes('purchase-success') || !!directRef || !!refFromHash || statusParam === 'success' || statusParam === 'successful') && !shouldGoReceipt && !shouldGoPaymentReturn;
 
-          if (shouldGoPurchaseSuccess) {
+          // Debug logging
+          console.log('App routing debug:', {
+            path,
+            hash,
+            shouldGoPaymentReturn,
+            shouldGoReceipt,
+            shouldGoPurchaseSuccess,
+            directRef,
+            refFromHash,
+            statusParam
+          });
+
+          if (shouldGoPaymentReturn) {
+            setNav('payment-return');
+            setStep(4);
+          } else if (shouldGoReceipt) {
+            setNav('coins-receipt');
+            setStep(4);
+          } else if (shouldGoPurchaseSuccess) {
             setNav('purchase-success');
             setStep(4);
           } else {
@@ -174,8 +198,93 @@ export default function App() {
       initializeApp();
     }, 1500);
 
-    return () => clearTimeout(splashTimeout);
+    // Listen for premium navigation event from GiftsDashboard
+    const handlePremiumNavigation = () => {
+      setNav('purchase');
+    };
+
+    window.addEventListener('navigate-to-premium', handlePremiumNavigation);
+
+    return () => {
+      clearTimeout(splashTimeout);
+      window.removeEventListener('navigate-to-premium', handlePremiumNavigation);
+    };
   }, []);
+
+  // Listen for URL changes (for navigation after Chapa redirect or test buttons)
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      
+      // Check if we should navigate to payment return or receipt page
+      const shouldGoPaymentReturn = path.startsWith('/coins/payment-return') || hash.includes('coins/payment-return') || hash.includes('#/coins/payment-return');
+      const shouldGoReceipt = path.startsWith('/coins/receipt') || hash.includes('coins/receipt') || hash.includes('#/coins/receipt');
+      
+      console.log('URL change detected:', {
+        path,
+        hash,
+        shouldGoPaymentReturn,
+        shouldGoReceipt,
+        currentNav: nav
+      });
+      
+      if (shouldGoPaymentReturn && nav !== 'payment-return') {
+        console.log('Navigating to payment-return');
+        setNav('payment-return');
+        setStep(4);
+      } else if (shouldGoReceipt && nav !== 'coins-receipt') {
+        console.log('Navigating to coins-receipt');
+        setNav('coins-receipt');
+        setStep(4);
+      } else {
+        console.log('No navigation needed - staying on current page');
+      }
+    };
+
+    // Check URL immediately
+    handleUrlChange();
+    
+    // Listen for popstate events (back/forward button)
+    window.addEventListener('popstate', handleUrlChange);
+    
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleUrlChange);
+    
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, [nav]); // Re-run when nav changes
+
+  const handleGiftSent = (giftData) => {
+    // Add gift animation effect
+    const newEffect = {
+      id: Date.now(),
+      gift: giftData.gift,
+      fromUser: giftData.fromUser,
+      toUser: giftData.toUser,
+    };
+    
+    setGiftEffects(prev => [...prev, newEffect]);
+    
+    // Remove effect after animation
+    setTimeout(() => {
+      setGiftEffects(prev => prev.filter(effect => effect.id !== newEffect.id));
+    }, 3000);
+    
+    // Update matches to reflect the gift sent
+    setMatches(prevMatches => prevMatches.map(match => {
+      if (match.id === giftData.toUser.id) {
+        return {
+          ...match,
+          lastGift: giftData.gift,
+          lastGiftTime: new Date().toISOString(),
+        };
+      }
+      return match;
+    }));
+  };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -471,12 +580,20 @@ export default function App() {
   };
 
   const renderContent = () => {
-    if (step === 0 || isLoading) {
-      return <SplashScreen />;
-    }
-    
     // Debug: Add console log to see what step we're in
-    console.log('Current step:', step, 'Nav:', nav, 'Auth token:', !!authToken, 'Current user:', !!currentUser);
+    console.log('Current step:', step, 'Nav:', nav, 'Auth token:', !!authToken, 'Current user:', !!currentUser, 'isLoading:', isLoading);
+    
+    if (step === 0 || isLoading) {
+      return (
+        <div className="flex items-center justify-center h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
+          <div className="text-center text-white">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+            <p>Loading LunaLove...</p>
+            <p className="text-sm mt-2">Step: {step}, Loading: {isLoading.toString()}</p>
+          </div>
+        </div>
+      );
+    }
 
     const signupPage = (
       <div className="min-h-screen flex flex-col">
@@ -498,14 +615,16 @@ export default function App() {
         return <ProfileSetup currentUser={currentUser} authToken={authToken} onFinish={handleProfileSetupFinish} />;
       case 4:
         return (
-          <div className="flex flex-col">
-            <div className="flex-1 min-h-0">
+          <div className="flex flex-col h-full">
+            <div className="flex-1 min-h-0 overflow-y-auto">
               {nav === "home" && <HomeSwiping onMatch={() => setStep(5)} onGift={() => setShowGift(true)} onChatToggle={setIsChatOpen} />}
               {nav === "matches" && <EnhancedMatches onChat={match => { setSelectedMatch(match); setStep(5); }} onNavigate={setNav} />}
-              {nav === "purchase" && <PurchasePage currentUser={currentUser} onNavigate={setNav} />}
+              {nav === "purchase" && <UnifiedPurchasePage currentUser={currentUser} onNavigate={setNav} />}
               {nav === "buy-coins" && <BuyCoinsPage onBack={() => setNav('purchase')} />}
+              {nav === "coins-receipt" && <CoinPurchaseReceipt onBack={() => setNav('purchase')} />}
+              {nav === "payment-return" && <PaymentReturn onNavigate={setNav} />}
               {nav === "purchase-success" && <PurchaseSuccess onNavigate={setNav} onUserRefresh={(u) => setCurrentUser(u)} />}
-              {nav === "profile" && <Profile user={currentUser} onSave={handleProfileSave} />}
+              {nav === "profile" && <Profile user={currentUser} onSave={handleProfileSave} onNavigate={setNav} />}
               {nav === "settings" && (
                 <Settings
                   onLogout={handleLogout}
@@ -515,11 +634,11 @@ export default function App() {
                   giftSoundsEnabled={giftSoundsEnabled}
                   onToggleGiftSounds={() => setGiftSoundsEnabled(v => !v)}
                   onRerunSetup={() => setStep(3)}
+                  onNavigate={setNav}
                 />
               )}
+              {nav === "earnings" && <EarningsDashboard onNavigate={setNav} />}
             </div>
-            {/* Spacer to ensure content clears the fixed NavigationBar */}
-            {!isChatOpen && <div className="h-28 md:h-32" aria-hidden="true" />}
             {!isChatOpen && <NavigationBar current={nav} onNavigate={setNav} />}
           </div>
         );
@@ -544,7 +663,7 @@ export default function App() {
 
   return (
     <GoogleOAuthProvider clientId={googleClientId}>
-      <div className={`bg-white dark:bg-gray-900 transition-colors duration-300 flex flex-col min-h-screen`}>
+      <div className={`bg-white dark:bg-gray-900 transition-colors duration-300 flex flex-col h-screen`}>
         {showLogin && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 p-8 rounded-lg max-w-md w-full max-h-full overflow-y-auto">
@@ -553,7 +672,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <main className={`flex-grow min-h-0 ${step >= 4 ? 'overflow-visible pb-40' : 'overflow-y-auto'}`}>{renderContent()}</main>
+        <main className={`flex-grow min-h-0 ${step >= 4 ? 'overflow-visible' : 'overflow-y-auto'}`}>{renderContent()}</main>
         {showGift && <GiftStore onClose={() => setShowGift(false)} onSend={handleSendGift} />}
         {showUpgrade && <Upgrade onClose={() => setShowUpgrade(false)} />}
         

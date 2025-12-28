@@ -16,7 +16,6 @@ from .views import (
     GoogleLoginView,
     ChatbotView,
     InitializePaymentView,
-    ChapaWebhookView,
     VerifyPaymentView,
     ResetSwipesView,
     SubscriptionPlansView,
@@ -35,6 +34,23 @@ from .views import (
     ChatMessagesView,
     CreateFakeLikeView,
     ClearLikesView,
+    # Gift and Payment System views
+    CoinPackageListView,
+    UserWalletView,
+    PurchaseCoinsView,
+    CoinPurchaseStatusView,
+    VerifyCoinPaymentView,
+    CancelCoinPaymentView,
+    GiftTypeListView,
+    SendGiftView,
+    GiftHistoryView,
+    BankListView,
+    ChapaWebhookView,
+    SubscriptionWebhookView,
+    CreateSubaccountView,
+    SubaccountStatusView,
+    DeleteSubaccountView,
+    MobileDeepLinkReturnView,
 )
 
 app_name = 'api'
@@ -64,7 +80,6 @@ urlpatterns = [
     path('cities/', CityListView.as_view(), name='city-list'),
     path('chatbot/', ChatbotView.as_view(), name='chatbot'),
     path('initialize-payment/', InitializePaymentView.as_view(), name='initialize-payment'),
-    path('payment-webhook/', ChapaWebhookView.as_view(), name='payment-webhook'),
     path('verify-payment/', VerifyPaymentView.as_view(), name='verify-payment'),
     
     # Enhanced Matching System URLs
@@ -83,6 +98,28 @@ urlpatterns = [
     # Dev/Testing endpoints
     path('dev/create-fake-like/', CreateFakeLikeView.as_view(), name='create-fake-like'),
     path('dev/clear-likes/', ClearLikesView.as_view(), name='clear-likes'),
+    
+    # Gift and Payment System endpoints
+    path('coins/packages/', CoinPackageListView.as_view(), name='coin-packages'),
+    path('coins/wallet/', UserWalletView.as_view(), name='user-wallet'),
+    path('coins/purchase/', PurchaseCoinsView.as_view(), name='purchase-coins'),
+    path('coins/purchase-status/', CoinPurchaseStatusView.as_view(), name='coin-purchase-status'),
+    path('coins/verify-payment/', VerifyCoinPaymentView.as_view(), name='verify-coin-payment'),
+    path('coins/cancel-payment/', CancelCoinPaymentView.as_view(), name='cancel-coin-payment'),
+    path('mobile-return/', MobileDeepLinkReturnView.as_view(), name='mobile-deep-link-return'),
+    path('gifts/types/', GiftTypeListView.as_view(), name='gift-types'),
+    path('gifts/send/', SendGiftView.as_view(), name='send-gift'),
+    path('gifts/history/', GiftHistoryView.as_view(), name='gift-history'),
+    path('banks/', BankListView.as_view(), name='bank-list'),
+    
+    # Subaccount Management
+    path('subaccount/create/', CreateSubaccountView.as_view(), name='create-subaccount'),
+    path('subaccount/status/', SubaccountStatusView.as_view(), name='subaccount-status'),
+    path('subaccount/delete/', DeleteSubaccountView.as_view(), name='delete-subaccount'),
+    
+    # Chapa Payment Webhooks
+    path('chapa/webhook/', ChapaWebhookView.as_view(), name='chapa-webhook'),
+    path('chapa/subscription-webhook/', SubscriptionWebhookView.as_view(), name='subscription-webhook'),
     
     # The DRF router will generate the URLs for the UserPhotoViewSet for list, create, detail, update, delete.
     path('', include(router.urls)),

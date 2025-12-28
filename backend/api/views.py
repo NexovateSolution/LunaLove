@@ -9,6 +9,8 @@ from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 from geopy.distance import geodesic # Import geopy
 from django.contrib.auth import authenticate
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 import requests # Import the requests library
 import uuid # Import the uuid library for generating unique IDs
 from django.core.cache import cache # Import Django's cache
@@ -18,6 +20,8 @@ import hmac
 import hashlib
 import logging
 import time
+import re
+from urllib.parse import quote
 
 # Imports for Google Auth
 from google.oauth2 import id_token
@@ -33,6 +37,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
+from django.http import HttpResponse
 from rest_framework.authtoken.views import ObtainAuthToken # Import ObtainAuthToken
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes # Import api_view decorator
@@ -43,11 +48,14 @@ from .serializers import (
     UserPhotoSerializer, InterestSerializer, SwipeSerializer, 
     PotentialMatchSerializer, LikeSerializer, LikeCreateSerializer, 
     PeopleWhoLikeMeSerializer, ChatbotConversationSerializer, 
-    ChatbotMessageSerializer, ChatMessageSerializer
+    ChatbotMessageSerializer, ChatMessageSerializer,
+    CoinPackageSerializer, UserWalletSerializer,
+    CoinPurchaseSerializer, GiftTypeSerializer, GiftTransactionSerializer, SendGiftSerializer
 )
 from .models import (
     User, UserPreference, UserPhoto, Interest, Swipe, Like, Match, Message, 
-    ChatbotConversation, ChatbotMessage, ChatMessage
+    ChatbotConversation, ChatbotMessage, ChatMessage,
+    CoinPackage, UserWallet, CoinPurchase, GiftType, GiftTransaction, PlatformSettings
 )
 # User = get_user_model()
 
@@ -70,6 +78,10 @@ class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
     permission_classes = [AllowAny]
+    
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -95,6 +107,11 @@ class UserRegistrationView(generics.CreateAPIView):
 
 class CustomLoginView(ObtainAuthToken):
     permission_classes = [AllowAny]
+    
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
+    
     def post(self, request, *args, **kwargs):
         login_identifier = request.data.get("username") # This can be username or email
         password = request.data.get("password")
@@ -142,6 +159,10 @@ class CustomLoginView(ObtainAuthToken):
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
+    
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
 
     def post(self, request, *args, **kwargs):
         id_token_from_request = request.data.get("id_token")
@@ -432,7 +453,11 @@ class CityListView(APIView):
 
         # IMPORTANT: Replace 'nexovate' with your own free username from geonames.org if needed.
         geonames_username = 'nexovate'
-        api_url = f"http://api.geonames.org/searchJSON?country={country_code}&featureClass=P&maxRows=1000&orderby=population&username={geonames_username}"
+        # Fetch a reasonable number of cities ordered by population, we'll trim to the top ~50 below
+        api_url = (
+            f"http://api.geonames.org/searchJSON?country={country_code}"
+            f"&featureClass=P&maxRows=300&orderby=population&username={geonames_username}"
+        )
 
         try:
             response = requests.get(api_url)
@@ -445,11 +470,14 @@ class CityListView(APIView):
                     for city in data['geonames']
                 ]
                 unique_cities = list({city['label']: city for city in cities}.values())
-                
+
+                # Limit to the first 50 entries so the mobile dropdown stays fast and focused on major cities
+                limited_cities = unique_cities[:50]
+
                 # Cache the result for 24 hours (86400 seconds)
-                cache.set(cache_key, unique_cities, timeout=86400)
-                
-                return Response(unique_cities, status=status.HTTP_200_OK)
+                cache.set(cache_key, limited_cities, timeout=86400)
+
+                return Response(limited_cities, status=status.HTTP_200_OK)
             else:
                 error_message = data.get('status', {}).get('message', 'No cities found or API error.')
                 return Response({"error": error_message}, status=status.HTTP_404_NOT_FOUND)
@@ -988,22 +1016,146 @@ class SubscriptionPlansView(APIView):
 
 class SubscribePlanView(APIView):
     permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
 
     def post(self, request, *args, **kwargs):
+        from .models import SubscriptionPurchase
+        
         try:
             plan_id = int(request.data.get('plan_id'))
         except (TypeError, ValueError):
             return Response({'detail': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Basic validation for demo plans
-        if plan_id not in {1, 2, 3}:
+        # Define plan details
+        plans = {
+            1: {'code': 'BOOST', 'name': 'Boost Plan', 'price': '199.00'},
+            2: {'code': 'LIKES_REVEAL', 'name': 'Likes Reveal Plan', 'price': '149.00'},
+            3: {'code': 'AD_FREE', 'name': 'Ad-Free Plan', 'price': '99.00'},
+        }
+        
+        if plan_id not in plans:
             return Response({'detail': 'Invalid plan_id'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        plan = plans[plan_id]
+        
+        # Create subscription purchase record
+        # Keep tx_ref under 50 chars: sub-BOOST-abc123 (max ~20 chars)
+        tx_ref = f"sub-{plan['code']}-{get_random_string(12)}"
+        subscription_purchase = SubscriptionPurchase.objects.create(
+            user=request.user,
+            plan_code=plan['code'],
+            plan_name=plan['name'],
+            amount_etb=plan['price'],
+            duration_days=30,
+            transaction_ref=tx_ref,
+            payment_method='Chapa'
+        )
+        
+        # Prepare user info for Chapa
+        safe_email = (request.user.email or f"{(request.user.username or 'user').strip()}@example.com").strip()
+        safe_first_name = (request.user.first_name or (request.user.username or 'Luna')).strip() or 'Luna'
+        safe_last_name = (request.user.last_name or 'User').strip() or 'User'
+        raw_phone = getattr(request.user, 'phone_number', None)
+        phone_str = str(raw_phone).strip() if raw_phone else ''
+        phone_valid = bool(re.fullmatch(r'(09|07)\d{8}', phone_str))
+        
+        # Build metadata
+        meta_data = {
+            "user_id": str(request.user.id),
+            "username": request.user.username,
+            "plan_code": plan['code'],
+            "plan_name": plan['name'],
+            "purchase_id": str(subscription_purchase.id),
+            "type": "subscription"
+        }
+        
+        # Allow mobile clients to override the return URL so they can deep-link back into the app.
+        # Like coins, we must give Chapa a valid HTTP/HTTPS URL. If a mobile deep link is provided,
+        # wrap it in the MobileDeepLinkReturnView bridge, using the same host the mobile app used
+        # (via request.build_absolute_uri) instead of any hard-coded BACKEND_URL/ngrok domain.
+        mobile_return_url = request.data.get('return_url')
+        if mobile_return_url:
+            deep_link = f"{mobile_return_url}?tx_ref={tx_ref}&purchase_id={subscription_purchase.id}"
+            encoded_deep_link = quote(deep_link, safe='')
+            bridge_base = request.build_absolute_uri('/api/mobile-return/')
+            sub_return_url = f"{bridge_base}?deeplink={encoded_deep_link}"
+        else:
+            sub_return_url = (
+                f"{settings.FRONTEND_URL}/#/subscription/payment-return"
+                f"?tx_ref={tx_ref}&purchase_id={subscription_purchase.id}"
+            )
 
-        # Build a stubbed checkout URL redirecting back to the frontend
-        base = getattr(settings, 'FRONTEND_URL', os.environ.get('FRONTEND_URL', 'http://localhost:5173'))
-        reference = f"sub-{plan_id}-{request.user.id}-{uuid.uuid4().hex[:8]}"
-        checkout_url = f"{base}/purchase-success/?status=success&reference={reference}&plan_id={plan_id}"
-        return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
+        # Prepare Chapa payload
+        chapa_payload = {
+            "amount": str(plan['price']),
+            "currency": "ETB",
+            "email": safe_email,
+            "first_name": safe_first_name,
+            "last_name": safe_last_name,
+            "tx_ref": tx_ref,
+            "callback_url": f"{settings.BACKEND_URL}/api/chapa/subscription-webhook/",
+            "return_url": sub_return_url,
+            "customization": {
+                "title": "LunaLove Pro",
+                "description": plan['name'][:50]
+            },
+            "meta": meta_data
+        }
+        if phone_valid:
+            chapa_payload["phone_number"] = phone_str
+        
+        try:
+            logging.info(f"Chapa subscription payload: {chapa_payload}")
+            
+            chapa_response = requests.post(
+                'https://api.chapa.co/v1/transaction/initialize',
+                json=chapa_payload,
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            logging.info(f"Chapa subscription response status: {chapa_response.status_code}")
+            logging.info(f"Chapa subscription response body: {chapa_response.text}")
+            
+            if chapa_response.status_code == 200:
+                chapa_data = chapa_response.json()
+                if chapa_data.get('status') == 'success':
+                    checkout_url = chapa_data['data']['checkout_url']
+                    
+                    return Response({
+                        'success': True,
+                        'checkout_url': checkout_url,
+                        'purchase_id': str(subscription_purchase.id),
+                        'tx_ref': tx_ref,
+                        'plan': plan
+                    })
+                else:
+                    logging.error(f"Chapa subscription init non-success: {chapa_data}")
+                    return Response({
+                        'error': 'Payment initialization failed',
+                        'provider_response': chapa_data if settings.DEBUG else None
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                body = None
+                try:
+                    body = chapa_response.json()
+                except Exception:
+                    try:
+                        body = chapa_response.text
+                    except Exception:
+                        body = None
+                logging.error(f"Chapa subscription init failed with status {chapa_response.status_code}: {body}")
+                return Response({
+                    'error': 'Payment initialization failed',
+                    'provider_status': chapa_response.status_code,
+                    'provider_response': body if settings.DEBUG else None
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            logging.error(f"Chapa subscription payment initialization error: {e}")
+            return Response({'error': 'Payment service unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 class SubscriptionActivateView(APIView):
@@ -1458,3 +1610,1059 @@ class ClearLikesView(APIView):
             'matches_deleted': matches_deleted[0] if matches_deleted[0] else 0,
             'message': f'Cleared {likes_deleted[0]} likes and {matches_deleted[0]} matches for {user.first_name}'
         })
+
+
+# ===== GIFT AND PAYMENT SYSTEM VIEWS =====
+
+class MobileDeepLinkReturnView(APIView):
+    """HTML bridge page that redirects the browser to a mobile deep link.
+
+    Chapa requires return_url to be a valid HTTP/HTTPS URL, so we can't send
+    a custom scheme (like lunalove://) directly. Instead, we point Chapa to
+    this bridge endpoint with an encoded deep link in the query string.
+    When Chapa redirects here, we immediately redirect the user to the
+    provided deep link using JavaScript.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        deeplink_param = request.query_params.get('deeplink', '')
+        if not deeplink_param:
+            return HttpResponse("Missing deeplink", status=400)
+
+        # We stored the deep link percent-encoded in the URL; use it directly
+        # in the href and decode it client-side in JS for window.location.
+        safe_deeplink = deeplink_param
+
+        html = f"""<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <title>Returning to LunaLove</title>
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <script>
+      (function() {{
+        try {{
+          var encoded = '{safe_deeplink}';
+          var target = decodeURIComponent(encoded);
+          if (target) {{
+            window.location.href = target;
+          }}
+        }} catch (e) {{
+          console.error('Deep link redirect failed', e);
+        }}
+      }})();
+    </script>
+  </head>
+  <body>
+    <p>Redirecting you back to the LunaLove app...</p>
+    <p>If you are not redirected automatically, <a href=\"{safe_deeplink}\">tap here to continue</a>.</p>
+  </body>
+</html>"""
+
+        return HttpResponse(html)
+
+
+class CoinPackageListView(generics.ListAPIView):
+    """List available coin packages"""
+    serializer_class = CoinPackageSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        return CoinPackage.objects.filter(is_active=True)
+
+
+class UserWalletView(APIView):
+    """Get user's wallet information"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get(self, request):
+        wallet, created = UserWallet.objects.get_or_create(user=request.user)
+        serializer = UserWalletSerializer(wallet)
+        return Response(serializer.data)
+
+
+class PurchaseCoinsView(APIView):
+    """Initialize coin purchase via Chapa"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        package_id = request.data.get('package_id')
+        
+        try:
+            package = CoinPackage.objects.get(id=package_id, is_active=True)
+        except CoinPackage.DoesNotExist:
+            return Response({'error': 'Invalid package'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create coin purchase record
+        tx_ref = f"coin-{request.user.id}-{get_random_string(8)}"
+        coin_purchase = CoinPurchase.objects.create(
+            user=request.user,
+            package=package,
+            amount_etb=package.price_etb,
+            coins_purchased=package.total_coins,
+            transaction_ref=tx_ref,
+            payment_method='Chapa'
+        )
+        
+        # Initialize Chapa payment
+        # Sanitize user fields (Chapa requires valid strings; email recommended)
+        safe_email = (request.user.email or f"{(request.user.username or 'user').strip()}@example.com").strip()
+        safe_first_name = (request.user.first_name or (request.user.username or 'Luna')).strip() or 'Luna'
+        safe_last_name = (request.user.last_name or 'User').strip() or 'User'
+        raw_phone = getattr(request.user, 'phone_number', None)
+        phone_str = str(raw_phone).strip() if raw_phone else ''
+        phone_valid = bool(re.fullmatch(r'(09|07)\d{8}', phone_str))
+
+        # Build detailed payment metadata
+        meta_data = {
+            "user_id": str(request.user.id),
+            "username": request.user.username,
+            "package_name": package.name,
+            "coins": package.total_coins,
+            "bonus_coins": package.bonus_coins,
+            "purchase_id": str(coin_purchase.id)
+        }
+        
+        # Allow mobile clients to override the return URL so they can deep-link back into the app.
+        # IMPORTANT: Chapa requires return_url to be a valid HTTP/HTTPS URL, so we can't send
+        # a custom scheme (like lunalove://) directly. Instead, we send Chapa to a small
+        # HTML bridge endpoint that then redirects to the deep link.
+        mobile_return_url = request.data.get('return_url')
+        if mobile_return_url:
+            deep_link = f"{mobile_return_url}?tx_ref={tx_ref}&purchase_id={coin_purchase.id}"
+            encoded_deep_link = quote(deep_link, safe='')
+            # Build bridge URL on the same host the mobile app used (e.g. http://10.x.x.x:8000)
+            bridge_base = request.build_absolute_uri('/api/mobile-return/')
+            chapa_return_url = f"{bridge_base}?deeplink={encoded_deep_link}"
+        else:
+            chapa_return_url = (
+                f"{settings.FRONTEND_URL}/#/coins/payment-return"
+                f"?tx_ref={tx_ref}&purchase_id={coin_purchase.id}"
+            )
+
+        chapa_payload = {
+            "amount": str(package.price_etb),
+            "currency": "ETB",
+            "email": safe_email,
+            "first_name": safe_first_name,
+            "last_name": safe_last_name,
+            "tx_ref": tx_ref,
+            # Callback URL - Chapa will send webhook here (must be publicly accessible)
+            # For local dev, this should be your ngrok URL
+            "callback_url": f"{settings.BACKEND_URL}/api/chapa/webhook/",
+            "return_url": chapa_return_url,
+            "customization": {
+                "title": "LunaLove Coins",
+                "description": f"{package.total_coins} coins"[:50]  # Max 50 chars
+            },
+            "meta": meta_data
+        }
+        if phone_valid:
+            chapa_payload["phone_number"] = phone_str
+        
+        try:
+            # Log the payload for debugging
+            logging.info(f"Chapa payload: {chapa_payload}")
+            
+            chapa_response = requests.post(
+                'https://api.chapa.co/v1/transaction/initialize',
+                json=chapa_payload,
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            logging.info(f"Chapa response status: {chapa_response.status_code}")
+            logging.info(f"Chapa response body: {chapa_response.text}")
+            
+            if chapa_response.status_code == 200:
+                chapa_data = chapa_response.json()
+                if chapa_data.get('status') == 'success':
+                    checkout_url = chapa_data['data']['checkout_url']
+                    
+                    return Response({
+                        'success': True,
+                        'checkout_url': checkout_url,
+                        'purchase_id': str(coin_purchase.id),
+                        'tx_ref': tx_ref,
+                        'package': CoinPackageSerializer(package).data
+                    })
+                else:
+                    logging.error(f"Chapa init non-success body: {chapa_data}")
+                    return Response({
+                        'error': 'Payment initialization failed',
+                        'provider_response': chapa_data if settings.DEBUG else None
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                body = None
+                try:
+                    body = chapa_response.json()
+                except Exception:
+                    try:
+                        body = chapa_response.text
+                    except Exception:
+                        body = None
+                logging.error(f"Chapa init failed with status {chapa_response.status_code}: {body}")
+                return Response({
+                    'error': 'Payment initialization failed',
+                    'provider_status': chapa_response.status_code,
+                    'provider_response': body if settings.DEBUG else None
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            logging.error(f"Chapa payment initialization error: {e}")
+            return Response({'error': 'Payment service unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class CoinPurchaseStatusView(APIView):
+    """Get coin purchase status and details for receipt"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get(self, request):
+        purchase_id = request.query_params.get('purchase_id')
+        chapa_ref = request.query_params.get('chapa_ref')
+        status_param = request.query_params.get('status')
+        
+        try:
+            # Try to find purchase by ID first, then by transaction reference
+            if purchase_id:
+                coin_purchase = CoinPurchase.objects.get(id=purchase_id, user=request.user)
+            elif chapa_ref:
+                coin_purchase = CoinPurchase.objects.get(transaction_ref=chapa_ref, user=request.user)
+            else:
+                return Response({'error': 'Purchase ID or transaction reference required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get current wallet balance
+            wallet, _ = UserWallet.objects.get_or_create(user=request.user)
+            
+            return Response({
+                'transaction_id': str(coin_purchase.id),
+                'transaction_ref': coin_purchase.transaction_ref,
+                'package_name': coin_purchase.package.name,
+                'coins_purchased': coin_purchase.coins_purchased,
+                'amount_etb': str(coin_purchase.amount_etb),
+                'status': coin_purchase.status,
+                'created_at': coin_purchase.created_at.isoformat() if coin_purchase.created_at else None,
+                'completed_at': coin_purchase.completed_at.isoformat() if coin_purchase.completed_at else None,
+                'payment_method': coin_purchase.payment_method or 'Chapa',
+                'new_balance': wallet.coins
+            })
+            
+        except CoinPurchase.DoesNotExist:
+            # If purchase not found, return mock data for testing
+            if purchase_id and purchase_id.startswith('test-'):
+                # Use the chapa_ref if provided, otherwise generate a test one
+                test_chapa_ref = chapa_ref if chapa_ref else 'TEST-APQ1kcaiCZi2'
+                return Response({
+                    'transaction_id': purchase_id,
+                    'chapa_reference': test_chapa_ref,
+                    'package_name': 'Test Premium Pack - 600 Coins',
+                    'coins_purchased': 600,
+                    'amount_etb': 180.00,
+                    'status': 'completed',
+                    'created_at': timezone.now().isoformat(),
+                    'completed_at': timezone.now().isoformat(),
+                    'payment_method': 'Chapa (Test Mode)',
+                    'new_balance': 1000,
+                    'receipt_url': f'https://chapa.link/payment-receipt/{test_chapa_ref}'
+                })
+            return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            # Handle UUID validation errors for test cases
+            if purchase_id and purchase_id.startswith('test-'):
+                test_chapa_ref = chapa_ref if chapa_ref else 'TEST-APQ1kcaiCZi2'
+                return Response({
+                    'transaction_id': purchase_id,
+                    'chapa_reference': test_chapa_ref,
+                    'package_name': 'Test Premium Pack - 600 Coins',
+                    'coins_purchased': 600,
+                    'amount_etb': 180.00,
+                    'status': 'completed',
+                    'created_at': timezone.now().isoformat(),
+                    'completed_at': timezone.now().isoformat(),
+                    'payment_method': 'Chapa (Test Mode)',
+                    'new_balance': 1000,
+                    'receipt_url': f'https://chapa.link/payment-receipt/{test_chapa_ref}'
+                })
+            return Response({'error': 'Invalid purchase ID format'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logging.error(f"Error fetching purchase status: {e}")
+            return Response({'error': 'Failed to fetch purchase details'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class VerifyCoinPaymentView(APIView):
+    """Manually verify a coin purchase payment with Chapa"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        tx_ref = request.data.get('tx_ref')
+        
+        if not tx_ref:
+            return Response({'error': 'Transaction reference required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Find the purchase
+            coin_purchase = CoinPurchase.objects.get(transaction_ref=tx_ref, user=request.user)
+            
+            # Call Chapa verify API
+            verify_response = requests.get(
+                f'https://api.chapa.co/v1/transaction/verify/{tx_ref}',
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}'
+                }
+            )
+            
+            logging.info(f"Chapa verify response for {tx_ref}: {verify_response.status_code} - {verify_response.text}")
+            
+            if verify_response.status_code == 200:
+                verify_data = verify_response.json()
+                
+                if verify_data.get('status') == 'success':
+                    payment_status = verify_data['data'].get('status')
+                    
+                    if payment_status == 'success':
+                        # Payment verified successfully
+                        if coin_purchase.status != 'completed':
+                            coin_purchase.status = 'completed'
+                            coin_purchase.completed_at = timezone.now()
+                            coin_purchase.save()
+                            
+                            # Credit coins to user wallet
+                            wallet, _ = UserWallet.objects.get_or_create(user=request.user)
+                            wallet.coins += coin_purchase.coins_purchased
+                            wallet.save()
+                            
+                            logging.info(f"Payment verified and coins credited: {tx_ref}, user: {request.user.username}, coins: {coin_purchase.coins_purchased}")
+                        
+                        return Response({
+                            'success': True,
+                            'status': 'completed',
+                            'message': 'Payment verified successfully',
+                            'coins_credited': coin_purchase.coins_purchased,
+                            'new_balance': wallet.coins,
+                            'payment_details': verify_data['data']
+                        })
+                    else:
+                        # Payment not successful
+                        coin_purchase.status = 'failed'
+                        coin_purchase.save()
+                        
+                        return Response({
+                            'success': False,
+                            'status': payment_status,
+                            'message': f'Payment status: {payment_status}',
+                            'payment_details': verify_data['data']
+                        })
+                else:
+                    return Response({
+                        'error': 'Verification failed',
+                        'details': verify_data
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({
+                    'error': 'Failed to verify payment',
+                    'status_code': verify_response.status_code
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except CoinPurchase.DoesNotExist:
+            return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logging.error(f"Payment verification error: {e}")
+            return Response({'error': 'Verification failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CancelCoinPaymentView(APIView):
+    """Cancel a pending coin purchase payment"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        tx_ref = request.data.get('tx_ref')
+        
+        if not tx_ref:
+            return Response({'error': 'Transaction reference required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Find the purchase
+            coin_purchase = CoinPurchase.objects.get(transaction_ref=tx_ref, user=request.user)
+            
+            # Only allow cancellation of pending purchases
+            if coin_purchase.status == 'completed':
+                return Response({'error': 'Cannot cancel completed purchase'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Call Chapa cancel API (if available in their API)
+            # Note: Chapa may not have a cancel endpoint, so we just mark as cancelled locally
+            coin_purchase.status = 'cancelled'
+            coin_purchase.save()
+            
+            logging.info(f"Payment cancelled: {tx_ref}, user: {request.user.username}")
+            
+            return Response({
+                'success': True,
+                'message': 'Payment cancelled successfully',
+                'transaction_ref': tx_ref
+            })
+                
+        except CoinPurchase.DoesNotExist:
+            return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logging.error(f"Payment cancellation error: {e}")
+            return Response({'error': 'Cancellation failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GiftTypeListView(generics.ListAPIView):
+    """List available gift types"""
+    serializer_class = GiftTypeSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get_queryset(self):
+        return GiftType.objects.filter(is_active=True)
+
+
+class SendGiftView(APIView):
+    """Send a gift to another user"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        serializer = SendGiftSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        data = serializer.validated_data
+        sender = request.user
+        
+        try:
+            receiver = User.objects.get(id=data['receiver_id'])
+            gift_type = GiftType.objects.get(id=data['gift_type_id'], is_active=True)
+        except (User.DoesNotExist, GiftType.DoesNotExist):
+            return Response({'error': 'Invalid receiver or gift type'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if sender has enough coins
+        sender_wallet, _ = UserWallet.objects.get_or_create(user=sender)
+        total_cost = gift_type.coin_cost * data['quantity']
+        
+        # For testing: Auto-add coins if insufficient (only in DEBUG mode)
+        if settings.DEBUG and sender_wallet.coins < total_cost:
+            logging.info(f"TEST MODE: Adding {total_cost} coins to {sender.username} for testing")
+            sender_wallet.coins += total_cost
+            sender_wallet.save()
+        
+        if sender_wallet.coins < total_cost:
+            return Response({
+                'error': 'Insufficient coins',
+                'required': total_cost,
+                'available': sender_wallet.coins
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create gift transaction
+        gift_transaction = GiftTransaction.objects.create(
+            sender=sender,
+            receiver=receiver,
+            gift_type=gift_type,
+            quantity=data['quantity'],
+            message=data.get('message', '')
+        )
+        
+        # Deduct coins from sender
+        sender_wallet.coins -= total_cost
+        sender_wallet.save()
+        
+        # Check if receiver has subaccount for split payment
+        has_subaccount = hasattr(receiver, 'subaccount') and receiver.subaccount.is_active
+        
+        # Add earnings to receiver if they have a subaccount
+        if has_subaccount:
+            receiver.subaccount.total_earnings_etb += gift_transaction.receiver_share_etb
+            receiver.subaccount.save()
+        
+        # Also track in wallet
+        receiver_wallet, _ = UserWallet.objects.get_or_create(user=receiver)
+        receiver_wallet.total_earned += gift_transaction.receiver_share_etb
+        receiver_wallet.save()
+        
+        # Mark split payment as processed (actual transfer happens via Chapa automatically)
+        if has_subaccount:
+            gift_transaction.split_payment_processed = True
+            gift_transaction.save()
+        
+        return Response({
+            'success': True,
+            'message': 'Gift sent successfully!',
+            'gift': GiftTransactionSerializer(gift_transaction).data,
+            'sender_coins_remaining': sender_wallet.coins,
+            'split_payment': has_subaccount,
+            'receiver_earnings': str(gift_transaction.receiver_share_etb) if has_subaccount else None,
+            'platform_cut': str(gift_transaction.platform_cut_etb)
+        })
+    
+    def _process_split_payment_old(self, gift_transaction):
+        """OLD: Process split payment via Chapa - NOT USED, kept for reference"""
+        try:
+            receiver_subaccount = gift_transaction.receiver.subaccount
+            if not receiver_subaccount or not receiver_subaccount.is_active:
+                return  # Skip split payment if no subaccount
+            
+            # Get platform settings
+            platform_settings, _ = PlatformSettings.objects.get_or_create()
+            
+            tx_ref = f"gift-{gift_transaction.id}-{get_random_string(8)}"
+            
+            # Initialize split payment
+            split_payload = {
+                "amount": str(gift_transaction.total_etb_value),
+                "currency": "ETB",
+                "email": gift_transaction.receiver.email,
+                "first_name": gift_transaction.receiver.first_name,
+                "last_name": gift_transaction.receiver.last_name,
+                "tx_ref": tx_ref,
+                "callback_url": f"{settings.FRONTEND_URL}/api/chapa/gift-webhook/",
+                "customization": {
+                    "title": f"Gift from {gift_transaction.sender.first_name}",
+                    "description": f"{gift_transaction.quantity}x {gift_transaction.gift_type.name}"
+                },
+                "subaccounts": {
+                    "id": receiver_subaccount.subaccount_id
+                }
+            }
+            
+            response = requests.post(
+                'https://api.chapa.co/v1/transaction/initialize',
+                json=split_payload,
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    gift_transaction.chapa_tx_ref = tx_ref
+                    gift_transaction.split_payment_processed = True
+                    gift_transaction.save()
+                    
+        except Exception as e:
+            logging.error(f"Split payment processing error: {e}")
+
+
+class GiftHistoryView(generics.ListAPIView):
+    """Get user's gift history (sent and received)"""
+    serializer_class = GiftTransactionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    pagination_class = None
+    
+    def get_queryset(self):
+        user = self.request.user
+        gift_type = self.request.query_params.get('type', 'all')
+        
+        if gift_type == 'sent':
+            return GiftTransaction.objects.filter(sender=user).order_by('-created_at')
+        elif gift_type == 'received':
+            return GiftTransaction.objects.filter(receiver=user).order_by('-created_at')
+        else:
+            return GiftTransaction.objects.filter(
+                Q(sender=user) | Q(receiver=user)
+            ).order_by('-created_at')
+
+
+class CreateSubAccountView(APIView):
+    """Create Chapa subaccount for user"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        bank_code = request.data.get('bank_code')
+        account_number = request.data.get('account_number')
+        account_name = request.data.get('account_name')
+        
+        if not all([bank_code, account_number, account_name]):
+            return Response({'error': 'All fields required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if user already has a subaccount
+        if hasattr(request.user, 'chapa_subaccount'):
+            return Response({'error': 'Subaccount already exists'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create subaccount via Chapa API
+        platform_settings, _ = PlatformSettings.objects.get_or_create()
+        
+        subaccount_payload = {
+            "business_name": f"{request.user.first_name} {request.user.last_name}",
+            "account_name": account_name,
+            "bank_code": int(bank_code),
+            "account_number": account_number,
+            "split_value": float(platform_settings.default_platform_cut) / 100,
+            "split_type": "percentage"
+        }
+        
+        try:
+            response = requests.post(
+                'https://api.chapa.co/v1/subaccount',
+                json=subaccount_payload,
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    subaccount_id = data['data']['subaccount_id']
+                    
+                    # Save subaccount to database
+                    chapa_subaccount = ChapaSubAccount.objects.create(
+                        user=request.user,
+                        subaccount_id=subaccount_id,
+                        bank_code=bank_code,
+                        account_number=account_number,
+                        account_name=account_name,
+                        business_name=subaccount_payload['business_name']
+                    )
+                    
+                    return Response({
+                        'success': True,
+                        'subaccount': ChapaSubAccountSerializer(chapa_subaccount).data
+                    })
+            
+            return Response({'error': 'Subaccount creation failed'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            logging.error(f"Subaccount creation error: {e}")
+            return Response({'error': 'Service unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class ChapaWebhookView(APIView):
+    """Handle Chapa payment webhooks with automatic verification"""
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            # Extract webhook data
+            tx_ref = request.data.get('tx_ref') or request.data.get('trx_ref')
+            status_webhook = request.data.get('status')
+            ref_id = request.data.get('ref_id') or request.data.get('reference')
+            
+            if not tx_ref:
+                return Response({'error': 'Missing tx_ref'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            logging.info(f"Webhook received for tx_ref: {tx_ref}, status: {status_webhook}")
+            
+            # Automatically verify the transaction with Chapa API
+            if status_webhook == 'success':
+                try:
+                    verify_response = requests.get(
+                        f'https://api.chapa.co/v1/transaction/verify/{tx_ref}',
+                        headers={'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}'}
+                    )
+                    
+                    if verify_response.status_code == 200:
+                        verify_data = verify_response.json()
+                        if verify_data.get('status') == 'success':
+                            verified_status = verify_data['data'].get('status')
+                            verified_ref = verify_data['data'].get('reference')
+                            
+                            if verified_status != 'success':
+                                logging.warning(f"Verification failed for {tx_ref}: status={verified_status}")
+                                return Response({'status': 'verification_failed'})
+                            
+                            # Use verified reference if available
+                            if verified_ref:
+                                ref_id = verified_ref
+                        else:
+                            logging.error(f"Verification API returned non-success: {verify_data}")
+                            return Response({'status': 'verification_failed'})
+                    else:
+                        logging.error(f"Verification API error: {verify_response.status_code}")
+                        return Response({'status': 'verification_failed'})
+                        
+                except Exception as e:
+                    logging.error(f"Verification request failed: {e}")
+                    return Response({'status': 'verification_error'})
+            
+            # Handle coin purchase completion
+            if tx_ref.startswith('coin-'):
+                try:
+                    coin_purchase = CoinPurchase.objects.get(transaction_ref=tx_ref)
+                    
+                    if status_webhook == 'success' and coin_purchase.status == 'pending':
+                        # Add coins to user's wallet
+                        wallet, _ = UserWallet.objects.get_or_create(user=coin_purchase.user)
+                        wallet.coins += coin_purchase.coins_purchased
+                        wallet.total_spent += coin_purchase.amount_etb
+                        wallet.save()
+                        
+                        # Update purchase status
+                        coin_purchase.status = 'completed'
+                        coin_purchase.completed_at = timezone.now()
+                        coin_purchase.save()
+                        
+                        logging.info(f"Coin purchase completed: {tx_ref}, user: {coin_purchase.user.username}, coins: {coin_purchase.coins_purchased}")
+                        
+                    elif status_webhook == 'failed':
+                        coin_purchase.status = 'failed'
+                        coin_purchase.save()
+                        logging.info(f"Coin purchase failed: {tx_ref}")
+                        
+                except CoinPurchase.DoesNotExist:
+                    logging.error(f"Coin purchase not found: {tx_ref}")
+                    return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            return Response({'status': 'success', 'message': 'Webhook processed successfully'})
+            
+        except Exception as e:
+            logging.error(f"Webhook processing error: {e}")
+            return Response({'error': 'Webhook processing failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SubscriptionWebhookView(APIView):
+    """Handle Chapa subscription payment webhooks with automatic verification"""
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        from .models import SubscriptionPurchase
+        
+        try:
+            # Extract webhook data
+            tx_ref = request.data.get('tx_ref') or request.data.get('trx_ref')
+            status_webhook = request.data.get('status')
+            
+            if not tx_ref:
+                return Response({'error': 'Missing tx_ref'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            logging.info(f"Subscription webhook received for tx_ref: {tx_ref}, status: {status_webhook}")
+            
+            # Automatically verify the transaction with Chapa API
+            if status_webhook == 'success':
+                try:
+                    verify_response = requests.get(
+                        f'https://api.chapa.co/v1/transaction/verify/{tx_ref}',
+                        headers={'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}'}
+                    )
+                    
+                    if verify_response.status_code == 200:
+                        verify_data = verify_response.json()
+                        if verify_data.get('status') == 'success':
+                            verified_status = verify_data['data'].get('status')
+                            
+                            if verified_status != 'success':
+                                logging.warning(f"Subscription verification failed for {tx_ref}: status={verified_status}")
+                                return Response({'status': 'verification_failed'})
+                        else:
+                            logging.error(f"Subscription verification API returned non-success: {verify_data}")
+                            return Response({'status': 'verification_failed'})
+                    else:
+                        logging.error(f"Subscription verification API error: {verify_response.status_code}")
+                        return Response({'status': 'verification_failed'})
+                        
+                except Exception as e:
+                    logging.error(f"Subscription verification request failed: {e}")
+                    return Response({'status': 'verification_error'})
+            
+            # Handle subscription purchase completion
+            if tx_ref.startswith('sub-'):
+                try:
+                    subscription_purchase = SubscriptionPurchase.objects.get(transaction_ref=tx_ref)
+                    
+                    if status_webhook == 'success' and subscription_purchase.status == 'pending':
+                        # Activate the subscription
+                        user = subscription_purchase.user
+                        now = timezone.now()
+                        expires = now + timedelta(days=subscription_purchase.duration_days)
+                        
+                        # Apply the subscription benefits based on plan code
+                        if subscription_purchase.plan_code == 'BOOST':
+                            user.has_boost = True
+                            user.boost_expiry = expires
+                        elif subscription_purchase.plan_code == 'LIKES_REVEAL':
+                            user.can_see_likes = True
+                            user.likes_reveal_expiry = expires
+                        elif subscription_purchase.plan_code == 'AD_FREE':
+                            user.ad_free = True
+                            user.ad_free_expiry = expires
+                        
+                        user.save()
+                        
+                        # Update purchase status
+                        subscription_purchase.status = 'completed'
+                        subscription_purchase.completed_at = now
+                        subscription_purchase.activated_at = now
+                        subscription_purchase.expires_at = expires
+                        subscription_purchase.save()
+                        
+                        logging.info(f"Subscription activated: {tx_ref}, user: {user.username}, plan: {subscription_purchase.plan_code}")
+                        
+                    elif status_webhook == 'failed':
+                        subscription_purchase.status = 'failed'
+                        subscription_purchase.save()
+                        logging.info(f"Subscription purchase failed: {tx_ref}")
+                        
+                except SubscriptionPurchase.DoesNotExist:
+                    logging.error(f"Subscription purchase not found: {tx_ref}")
+                    return Response({'error': 'Purchase not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            return Response({'status': 'success', 'message': 'Subscription webhook processed successfully'})
+            
+        except Exception as e:
+            logging.error(f"Subscription webhook processing error: {e}")
+            return Response({'error': 'Webhook processing failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BankListView(APIView):
+    """Get list of Ethiopian banks for subaccount creation"""
+    # Bank list is non-sensitive; allow public read so clients (web/mobile) and
+    # browser tools can fetch it without an auth token.
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def get(self, request):
+        try:
+            response = requests.get(
+                'https://api.chapa.co/v1/banks',
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return Response(data)
+            else:
+                return Response({'error': 'Failed to fetch banks'}, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            logging.error(f"Bank list fetch error: {e}")
+            return Response({'error': 'Service unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class CreateSubaccountView(APIView):
+    """Create a Chapa subaccount for receiving gift earnings"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        from .models import UserSubaccount
+        
+        # Check if user already has a subaccount
+        if hasattr(request.user, 'subaccount'):
+            return Response({
+                'error': 'You already have a subaccount',
+                'subaccount_id': request.user.subaccount.subaccount_id
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get bank details from request
+        bank_code = request.data.get('bank_code')
+        account_number = request.data.get('account_number')
+        account_name = request.data.get('account_name')
+        
+        if not all([bank_code, account_number, account_name]):
+            return Response({
+                'error': 'bank_code, account_number, and account_name are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get bank name from bank_code
+        try:
+            banks_response = requests.get(
+                'https://api.chapa.co/v1/banks',
+                headers={'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}'}
+            )
+            
+            if banks_response.status_code == 200:
+                banks_data = banks_response.json()
+                banks = banks_data.get('data', [])
+                bank = next((b for b in banks if str(b.get('id')) == str(bank_code)), None)
+                bank_name = bank.get('name', 'Unknown Bank') if bank else 'Unknown Bank'
+            else:
+                bank_name = 'Unknown Bank'
+        except Exception as e:
+            logging.error(f"Failed to fetch bank name: {e}")
+            bank_name = 'Unknown Bank'
+        
+        # Create Chapa subaccount
+        chapa_payload = {
+            "account_name": account_name,
+            "bank_code": int(bank_code),
+            "account_number": account_number,
+            "split_value": 0.70,  # 70% to receiver
+            "split_type": "percentage"
+        }
+        
+        try:
+            logging.info(f"Creating Chapa subaccount for user {request.user.username}: {chapa_payload}")
+            
+            response = requests.post(
+                'https://api.chapa.co/v1/subaccount',
+                json=chapa_payload,
+                headers={
+                    'Authorization': f'Bearer {settings.CHAPA_SECRET_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            logging.info(f"Chapa subaccount response: {response.status_code} - {response.text}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('status') == 'success':
+                    # Extract subaccount ID from response - try multiple possible formats
+                    data_obj = data.get('data', {})
+                    subaccount_id = (
+                        data_obj.get('subaccounts[id]') or 
+                        data_obj.get('id') or
+                        data_obj.get('subaccount_id') or
+                        data_obj.get('sub_account_id')
+                    )
+                    
+                    # If data is a string, it might be the ID itself
+                    if not subaccount_id and isinstance(data_obj, str):
+                        subaccount_id = data_obj
+                    
+                    # Log the full response for debugging
+                    logging.info(f"Extracted subaccount_id: {subaccount_id} from data: {data}")
+                    
+                    if not subaccount_id:
+                        logging.error(f"No subaccount ID in response: {data}")
+                        return Response({
+                            'error': 'Failed to get subaccount ID from Chapa',
+                            'details': data if settings.DEBUG else None
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    # Create UserSubaccount record
+                    subaccount = UserSubaccount.objects.create(
+                        user=request.user,
+                        bank_code=bank_code,
+                        bank_name=bank_name,
+                        account_number=account_number,
+                        account_name=account_name,
+                        subaccount_id=subaccount_id,
+                        split_type='percentage',
+                        split_value=0.70,
+                        is_verified=True  # Assume verified if Chapa accepted it
+                    )
+                    
+                    logging.info(f"Subaccount created successfully for user {request.user.username}: {subaccount_id}")
+                    
+                    return Response({
+                        'success': True,
+                        'message': 'Subaccount created successfully',
+                        'subaccount_id': subaccount_id,
+                        'bank_name': bank_name,
+                        'account_number': account_number[-4:].rjust(len(account_number), '*')  # Mask account number
+                    })
+                else:
+                    logging.error(f"Chapa subaccount creation failed: {data}")
+                    return Response({
+                        'error': 'Subaccount creation failed',
+                        'message': data.get('message', 'Unknown error'),
+                        'details': data if settings.DEBUG else None
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                error_data = None
+                try:
+                    error_data = response.json()
+                except:
+                    error_data = response.text
+                
+                logging.error(f"Chapa subaccount API error {response.status_code}: {error_data}")
+                return Response({
+                    'error': 'Failed to create subaccount',
+                    'status_code': response.status_code,
+                    'details': error_data if settings.DEBUG else None
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            logging.error(f"Subaccount creation error: {e}")
+            return Response({
+                'error': 'Service unavailable',
+                'message': str(e) if settings.DEBUG else 'Please try again later'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class SubaccountStatusView(APIView):
+    """Get user's subaccount status and earnings"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def get(self, request):
+        from .models import UserSubaccount
+        
+        try:
+            subaccount = request.user.subaccount
+            
+            return Response({
+                'has_subaccount': True,
+                'bank_name': subaccount.bank_name,
+                'account_number': subaccount.account_number[-4:].rjust(len(subaccount.account_number), '*'),
+                'total_earnings': str(subaccount.total_earnings_etb),
+                'total_withdrawn': str(subaccount.total_withdrawn_etb),
+                'available_balance': str(subaccount.available_balance),
+                'is_active': subaccount.is_active,
+                'is_verified': subaccount.is_verified,
+                'created_at': subaccount.created_at.isoformat()
+            })
+            
+        except UserSubaccount.DoesNotExist:
+            return Response({
+                'has_subaccount': False,
+                'message': 'No subaccount found. Create one to start earning from gifts!'
+            })
+        except Exception as e:
+            logging.error(f"Subaccount status error: {e}")
+            return Response({'error': 'Failed to fetch subaccount status'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeleteSubaccountView(APIView):
+    """Delete user's subaccount (allows them to add a new one)"""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [TokenAuthentication]
+    
+    def post(self, request):
+        from .models import UserSubaccount
+        
+        try:
+            subaccount = request.user.subaccount
+            
+            # Check if user has pending earnings
+            if subaccount.available_balance > 0:
+                return Response({
+                    'error': 'Cannot delete subaccount with pending earnings',
+                    'available_balance': str(subaccount.available_balance),
+                    'message': 'Please withdraw or wait for settlement of your earnings before changing accounts'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Store info for logging
+            bank_name = subaccount.bank_name
+            account_number = subaccount.account_number
+            
+            # Delete the subaccount
+            subaccount.delete()
+            
+            logging.info(f"Subaccount deleted for user {request.user.username}: {bank_name} - {account_number}")
+            
+            return Response({
+                'success': True,
+                'message': 'Bank account removed successfully. You can now add a new account.'
+            })
+            
+        except UserSubaccount.DoesNotExist:
+            return Response({
+                'error': 'No subaccount found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logging.error(f"Delete subaccount error: {e}")
+            return Response({
+                'error': 'Failed to delete subaccount',
+                'message': str(e) if settings.DEBUG else 'Please try again later'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

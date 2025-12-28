@@ -35,8 +35,17 @@ ENABLE_JAZZMIN = os.getenv('ENABLE_JAZZMIN', '0') in ('1', 'true', 'True')
 # Toggle to use PostgreSQL; when false, falls back to SQLite for local dev
 USE_POSTGRES = os.getenv('USE_POSTGRES', '0') in ('1', 'true', 'True')
 
+
+
 # Comma-separated list, e.g. "localhost,127.0.0.1"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv(
+        'ALLOWED_HOSTS',
+        'localhost,127.0.0.1,192.168.1.4,192.168.1.6,172.16.99.22,10.86.208.86',
+    ).split(',')
+    if h.strip()
+]
 
 
 # Application definition
@@ -95,7 +104,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
+    # 'django.middleware.csrf.CsrfViewMiddleware',  # Disabled for API-only backend
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -293,13 +302,21 @@ PAYMENTS_BYPASS = os.getenv('PAYMENTS_BYPASS', '0') in ('1', 'true', 'True')
 AUTO_IMPORT_TOKEN_GIFTS = os.getenv('AUTO_IMPORT_TOKEN_GIFTS', '0') in ('1', 'true', 'True')
 TOKEN_PLATFORM_DB_PATH = os.getenv('TOKEN_PLATFORM_DB_PATH', '')
 
-# Provider secrets
-CHAPA_SECRET = os.getenv('CHAPA_SECRET', os.getenv('CHAPA_SECRET_KEY', ''))
-CHAPA_PUBLIC = os.getenv('CHAPA_PUBLIC', '')
+# Chapa Payment Gateway Configuration
+CHAPA_SECRET_KEY = os.getenv('CHAPA_SECRET_KEY', '')
+CHAPA_PUBLIC_KEY = os.getenv('CHAPA_PUBLIC_KEY', '')
+CHAPA_ENCRYPTION_KEY = os.getenv('CHAPA_ENCRYPTION_KEY', '')
+
+# Legacy provider secrets (for backward compatibility)
+CHAPA_SECRET = os.getenv('CHAPA_SECRET', CHAPA_SECRET_KEY)
+CHAPA_PUBLIC = os.getenv('CHAPA_PUBLIC', CHAPA_PUBLIC_KEY)
 TELEBIRR_API_KEY = os.getenv('TELEBIRR_API_KEY', '')
 
 # Frontend URL for building checkout links
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+# Backend URL for webhook callbacks (use ngrok URL for local dev)
+BACKEND_URL = os.getenv('BACKEND_URL', 'http://localhost:8000')
 
 # Withdrawal thresholds
 MIN_WITHDRAWAL_ETB = os.getenv('MIN_WITHDRAWAL_ETB', '500')

@@ -48,13 +48,12 @@ export default function BuyCoinsPage({ onBack }) {
     setBtnBusyId(pkg.id);
     try {
       const data = await createTopUp(pkg.id);
-      const checkout = data?.checkout_url || data?.payment?.checkout_url;
-      if (checkout) {
+      if (data?.success && data?.checkout_url) {
         try {
-          const ref = data?.payment?.provider_ref || null;
+          const ref = data?.purchase_id || null;
           if (ref) localStorage.setItem('last_coin_ref', ref);
         } catch (_) {}
-        window.location.href = checkout;
+        window.location.href = data.checkout_url;
       } else {
         setError('Could not get checkout URL');
       }
