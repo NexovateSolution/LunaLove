@@ -81,8 +81,12 @@ export const useSendMessage = (matchId: string) => {
       queryClient.setQueryData<ChatMessage[]>(
         ['matchMessages', matchId],
         (old = []) => {
-          const filtered = old.filter((msg) => !msg.id.startsWith('temp-'));
-          return [...filtered, data];
+          const filtered = old.filter((msg) => {
+            // Backend may return numeric IDs; temp messages use string IDs like "temp-123".
+            const idStr = String((msg as any).id ?? '');
+            return !idStr.startsWith('temp-');
+          });
+          return [...filtered, data as any];
         }
       );
     },

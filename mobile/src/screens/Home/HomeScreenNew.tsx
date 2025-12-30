@@ -17,7 +17,7 @@ import FloatingActionButtons from '../../components/home/FloatingActionButtons';
 import DiscoveryFiltersModal from '../../components/modals/DiscoveryFiltersModal';
 import MatchCelebrationModal from '../../components/modals/MatchCelebrationModal';
 import ProfileDetailModal from '../../components/modals/ProfileDetailModal';
-import { usePotentialMatches, useSwipe, useRewindSwipe } from '../../hooks/usePotentialMatches';
+import { usePotentialMatches, useSwipe, useRewindSwipe, useLikeUser } from '../../hooks/usePotentialMatches';
 import { useAuthStore } from '../../store/authStore';
 import { useMatchStore } from '../../store/matchStore';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../../constants/config';
@@ -37,6 +37,7 @@ export default function HomeScreenNew() {
   } = usePotentialMatches();
   const swipeMutation = useSwipe();
   const rewindMutation = useRewindSwipe();
+  const likeMutation = useLikeUser();
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showMatchModal, setShowMatchModal] = useState(false);
@@ -47,20 +48,32 @@ export default function HomeScreenNew() {
 
   const handleSwipe = async (profile: PotentialMatch, direction: 'like' | 'dislike') => {
     try {
-      const result = await swipeMutation.mutateAsync({
-        profile_id: profile.id,
-        swipe_type: direction,
-      });
+      if (direction === 'like') {
+        // Use enhanced matching system for likes (mirrors web app behavior)
+        const result: any = await likeMutation.mutateAsync(profile.id);
 
-      setCurrentIndex(prev => prev + 1);
+        setCurrentIndex(prev => prev + 1);
 
-      if (result.mutual_match && result.match_data) {
-        setMatchedProfile(profile);
-        setShowMatchModal(true);
-        addMatch(result.match_data);
+        if (result?.mutual_match && result.match_data) {
+          setMatchedProfile(profile);
+          setShowMatchModal(true);
+          addMatch(result.match_data);
+        }
+      } else {
+        // Use legacy swipe endpoint for dislikes/passes
+        await swipeMutation.mutateAsync({
+          profile_id: profile.id,
+          swipe_type: direction,
+        });
+
+        setCurrentIndex(prev => prev + 1);
       }
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.error || 'Failed to process swipe');
+      const message =
+        error?.response?.data?.error ||
+        error?.response?.data?.liked?.[0] ||
+        'Failed to process swipe';
+      Alert.alert('Error', message);
     }
   };
 

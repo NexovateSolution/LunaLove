@@ -276,13 +276,13 @@ export default function PurchaseScreenNew() {
                   <View style={styles.walletPill}>
                     <Text style={styles.walletPillLabel}>Total Spent</Text>
                     <Text style={styles.walletPillValue}>
-                      {`${(wallet?.total_spent ?? 0).toFixed(2)} ETB`}
+                      {`${Number(wallet?.total_spent ?? 0).toFixed(2)} ETB`}
                     </Text>
                   </View>
                   <View style={styles.walletPill}>
                     <Text style={styles.walletPillLabel}>Total Earned</Text>
                     <Text style={styles.walletPillValue}>
-                      {`${(wallet?.total_earned ?? 0).toFixed(2)} ETB`}
+                      {`${Number(wallet?.total_earned ?? 0).toFixed(2)} ETB`}
                     </Text>
                   </View>
                 </View>

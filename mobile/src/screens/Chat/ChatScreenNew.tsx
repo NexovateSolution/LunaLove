@@ -10,6 +10,7 @@ import {
   Platform,
   Modal,
   Alert,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,8 +21,15 @@ import { useGiftTypes, useSendGift } from '../../hooks/useGifts';
 import { useAuthStore } from '../../store/authStore';
 import { useWalletStore } from '../../store/walletStore';
 import SafeImage from '../../components/common/SafeImage';
+import ProfileDetailModal from '../../components/modals/ProfileDetailModal';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../../constants/config';
 import { ChatMessage, GiftType, Match } from '../../types';
+
+const EMOJI_OPTIONS = [
+  '😀','😃','😄','😁','😆','😂','🤣','😊','😍','😘',
+  '😜','🤗','🤔','😎','😢','😭','😡','👍','🙏','❤️',
+  '🔥','🎉','✨','💯','🥰','🤩','😇','🙌','🤝','👀',
+];
 
 export default function ChatScreenNew() {
   const route = useRoute();
@@ -32,6 +40,33 @@ export default function ChatScreenNew() {
 
   const otherUser = match.liker?.id === user?.id ? match.liked : match.liker;
 
+  const getStatusText = () => {
+    if (!otherUser) return '';
+
+    // Online status from backend (same field used in ChatListScreen)
+    if (otherUser.is_online) {
+      return 'Online';
+    }
+
+    // Use explicit last_seen if backend provides it
+    const lastSeen = otherUser.last_seen;
+
+    // Fallback: use time of last message as "last active" indicator
+    const lastActivity = lastSeen || (match.last_message as any)?.created_at;
+    if (!lastActivity) return '';
+
+    const lastDate = new Date(lastActivity);
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - lastDate.getTime()) / 1000);
+
+    if (diffInSeconds < 60) return 'Last seen just now';
+    if (diffInSeconds < 3600) return `Last seen ${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `Last seen ${Math.floor(diffInSeconds / 3600)}h ago`;
+    if (diffInSeconds < 604800) return `Last seen ${Math.floor(diffInSeconds / 86400)}d ago`;
+
+    return `Last seen on ${lastDate.toLocaleDateString()}`;
+  };
+
   const { data: messages = [], isLoading } = useMatchMessages(match.id);
   const sendMessageMutation = useSendMessage(match.id);
   const markAsReadMutation = useMarkMessagesAsRead(match.id);
@@ -41,6 +76,11 @@ export default function ChatScreenNew() {
 
   const [messageText, setMessageText] = useState('');
   const [showGiftPicker, setShowGiftPicker] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showProfileDetail, setShowProfileDetail] = useState(false);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -49,7 +89,33 @@ export default function ChatScreenNew() {
     }
   }, [messages]);
 
+  // On Android in Expo Go, rely on keyboard events to push the input bar above the keyboard
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const onKeyboardShow = (event: any) => {
+      setKeyboardOffset(event.endCoordinates?.height || 0);
+    };
+
+    const onKeyboardHide = () => {
+      setKeyboardOffset(0);
+    };
+
+    const showSub = Keyboard.addListener('keyboardDidShow', onKeyboardShow);
+    const hideSub = Keyboard.addListener('keyboardDidHide', onKeyboardHide);
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   const handleSendMessage = async () => {
+    if (isBlocked) {
+      Alert.alert('User blocked', 'You have blocked this user. Unblock to send messages.');
+      return;
+    }
+
     if (!messageText.trim()) return;
 
     const text = messageText.trim();
@@ -59,10 +125,55 @@ export default function ChatScreenNew() {
       await sendMessageMutation.mutateAsync(text);
       flatListRef.current?.scrollToEnd({ animated: true });
     } catch (error) {
-      Alert.alert('Error', 'Failed to send message');
+      const err: any = error;
+      const backendError =
+        err?.response?.data?.error ||
+        err?.response?.data?.detail ||
+        (typeof err?.response?.data === 'string' ? err.response.data : '') ||
+        err?.message ||
+        'Failed to send message';
+
+      console.error('[Chat] Failed to send message:', {
+        status: err?.response?.status,
+        data: err?.response?.data,
+        message: err?.message,
+      });
+
+      Alert.alert('Error', backendError);
       setMessageText(text);
     }
   };
+
+  const handleToggleBlock = () => {
+    if (!otherUser) return;
+    const next = !isBlocked;
+    setIsBlocked(next);
+    setShowActionsMenu(false);
+    Alert.alert(next ? 'User blocked' : 'User unblocked');
+  };
+
+  const headerProfile = otherUser
+    ? {
+        id: otherUser.id,
+        name: otherUser.first_name,
+        age: undefined,
+        photos: (otherUser.user_photos || []).map((p) => p.photo),
+        bio: otherUser.bio,
+        city: otherUser.city,
+        country: otherUser.country,
+        distance: (otherUser as any).distance_km,
+        interests: (otherUser.interests || []).map((i) =>
+          (i as any).emoji ? `${(i as any).emoji} ${i.name}` : i.name
+        ),
+        religion: otherUser.religion,
+        relationship_intent: otherUser.relationship_intent,
+        drinking_habits: otherUser.drinking_habits,
+        smoking_habits: otherUser.smoking_habits,
+        height: (otherUser as any).height,
+        education: (otherUser as any).education,
+        occupation: (otherUser as any).occupation,
+      }
+    : null;
 
   const handleSendGift = async (gift: GiftType) => {
     if (!wallet || wallet.balance < gift.coin_cost) {
@@ -91,8 +202,16 @@ export default function ChatScreenNew() {
     }
   };
 
-  const renderMessage = ({ item }: { item: ChatMessage }) => {
-    const isOwnMessage = item.sender.id === user?.id;
+  const renderMessage = ({ item }: { item: ChatMessage | any }) => {
+    // Backend returns sender_id (and sometimes sender); our optimistic messages also set sender_id
+    const senderId = item.sender_id ?? item.sender;
+    const isOwnMessage = senderId === user?.id || senderId === 'me';
+
+    // Support both created_at (optimistic) and sent_at/timestamp (backend)
+    const rawTimestamp = item.created_at || item.sent_at || item.timestamp;
+    const timeString = rawTimestamp
+      ? new Date(rawTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '';
 
     return (
       <View style={[styles.messageContainer, isOwnMessage && styles.ownMessageContainer]}>
@@ -117,7 +236,7 @@ export default function ChatScreenNew() {
                 </View>
               )}
               <Text style={styles.ownMessageTime}>
-                {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {timeString}
               </Text>
             </LinearGradient>
           ) : (
@@ -131,7 +250,7 @@ export default function ChatScreenNew() {
                 </View>
               )}
               <Text style={styles.otherMessageTime}>
-                {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {timeString}
               </Text>
             </>
           )}
@@ -145,7 +264,7 @@ export default function ChatScreenNew() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Gradient Header */}
       <LinearGradient
         colors={['#7209B7', '#F72585']}
@@ -156,69 +275,171 @@ export default function ChatScreenNew() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color={COLORS.background} />
         </TouchableOpacity>
-        <SafeImage uri={otherUser?.user_photos?.[0]?.photo} style={styles.headerAvatar} />
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>{otherUser?.first_name}</Text>
-          <Text style={styles.headerStatus}>● Connecting...</Text>
-        </View>
-        <TouchableOpacity style={styles.headerButton}>
+        <TouchableOpacity
+          style={styles.headerProfile}
+          onPress={() => setShowProfileDetail(true)}
+          activeOpacity={0.7}
+        >
+          <SafeImage uri={otherUser?.user_photos?.[0]?.photo} style={styles.headerAvatar} />
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerName}>{otherUser?.first_name}</Text>
+            {!!getStatusText() && (
+              <Text style={styles.headerStatus}>● {getStatusText()}</Text>
+            )}
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.headerButton}
+          onPress={() => setShowActionsMenu(true)}
+        >
           <Ionicons name="ellipsis-vertical" size={24} color={COLORS.background} />
         </TouchableOpacity>
       </LinearGradient>
 
-      {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-      />
-
-      {/* Input Area */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
-        <View style={styles.inputContainer}>
-          <TouchableOpacity
-            style={styles.giftButton}
-            onPress={() => setShowGiftPicker(true)}
-          >
-            <Ionicons name="gift" size={24} color={COLORS.primary} />
-          </TouchableOpacity>
-          
-          <TextInput
-            style={styles.input}
-            placeholder="Type your message..."
-            placeholderTextColor={COLORS.textTertiary}
-            value={messageText}
-            onChangeText={setMessageText}
-            multiline
-            maxLength={500}
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView
+          style={styles.keyboardView}
+          behavior="padding"
+          keyboardVerticalOffset={90}
+        >
+          {/* Messages */}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item.id}
+            style={styles.messages}
+            contentContainerStyle={styles.messagesList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           />
 
-          <TouchableOpacity style={styles.emojiButton}>
-            <Ionicons name="happy-outline" size={24} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.sendButton}
-            onPress={handleSendMessage}
-            disabled={!messageText.trim()}
-          >
-            <LinearGradient
-              colors={messageText.trim() ? ['#7209B7', '#F72585'] : [COLORS.gray300, COLORS.gray300]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.sendButtonGradient}
+          {/* Input Area */}
+          <View style={styles.inputContainer}>
+            <TouchableOpacity
+              style={styles.giftButton}
+              onPress={() => setShowGiftPicker(true)}
             >
-              <Ionicons name="send" size={20} color={COLORS.background} />
-            </LinearGradient>
-          </TouchableOpacity>
+              <Ionicons name="gift" size={24} color={COLORS.primary} />
+            </TouchableOpacity>
+            
+            <TextInput
+              style={styles.input}
+              placeholder="Type your message..."
+              placeholderTextColor={COLORS.textTertiary}
+              value={messageText}
+              onChangeText={setMessageText}
+              multiline
+              maxLength={500}
+            />
+
+            <TouchableOpacity
+              style={styles.emojiButton}
+              onPress={() => setShowEmojiPicker(true)}
+            >
+              <Ionicons name="happy-outline" size={24} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sendButton}
+              onPress={handleSendMessage}
+              disabled={!messageText.trim()}
+            >
+              <LinearGradient
+                colors={messageText.trim() ? ['#7209B7', '#F72585'] : [COLORS.gray300, COLORS.gray300]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.sendButtonGradient}
+              >
+                <Ionicons name="send" size={20} color={COLORS.background} />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={styles.keyboardView}>
+          {/* Messages */}
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item.id}
+            style={styles.messages}
+            contentContainerStyle={styles.messagesList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          />
+
+          {/* Input Area */}
+          <View style={[styles.inputContainer, { marginBottom: keyboardOffset }]}>
+            <TouchableOpacity
+              style={styles.giftButton}
+              onPress={() => setShowGiftPicker(true)}
+            >
+              <Ionicons name="gift" size={24} color={COLORS.primary} />
+            </TouchableOpacity>
+            
+            <TextInput
+              style={styles.input}
+              placeholder="Type your message..."
+              placeholderTextColor={COLORS.textTertiary}
+              value={messageText}
+              onChangeText={setMessageText}
+              multiline
+              maxLength={500}
+            />
+
+            <TouchableOpacity
+              style={styles.emojiButton}
+              onPress={() => setShowEmojiPicker(true)}
+            >
+              <Ionicons name="happy-outline" size={24} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sendButton}
+              onPress={handleSendMessage}
+              disabled={!messageText.trim()}
+            >
+              <LinearGradient
+                colors={messageText.trim() ? ['#7209B7', '#F72585'] : [COLORS.gray300, COLORS.gray300]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.sendButtonGradient}
+              >
+                <Ionicons name="send" size={20} color={COLORS.background} />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </View>
-      </KeyboardAvoidingView>
+      )}
+
+      <Modal
+        visible={showEmojiPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEmojiPicker(false)}
+      >
+        <TouchableOpacity
+          style={styles.emojiOverlay}
+          activeOpacity={1}
+          onPress={() => setShowEmojiPicker(false)}
+        >
+          <View style={styles.emojiPickerContainer}>
+            <View style={styles.emojiGrid}>
+              {EMOJI_OPTIONS.map((emoji) => (
+                <TouchableOpacity
+                  key={emoji}
+                  style={styles.emojiItem}
+                  onPress={() => setMessageText((prev) => prev + emoji)}
+                >
+                  <Text style={styles.emojiItemText}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Gift Picker Modal */}
       <Modal
@@ -255,6 +476,53 @@ export default function ChatScreenNew() {
           </View>
         </View>
       </Modal>
+
+      {headerProfile && (
+        <ProfileDetailModal
+          visible={showProfileDetail}
+          onClose={() => setShowProfileDetail(false)}
+          profile={headerProfile}
+        />
+      )}
+
+      <Modal
+        visible={showActionsMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowActionsMenu(false)}
+      >
+        <TouchableOpacity
+          style={styles.actionsOverlay}
+          activeOpacity={1}
+          onPress={() => setShowActionsMenu(false)}
+        >
+          <View style={styles.actionsContainer}>
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={() => {
+                setShowActionsMenu(false);
+                setShowProfileDetail(true);
+              }}
+            >
+              <Text style={styles.actionText}>View profile</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={handleToggleBlock}
+            >
+              <Text style={styles.actionDestructiveText}>
+                {isBlocked ? 'Unblock user' : 'Block user'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={() => setShowActionsMenu(false)}
+            >
+              <Text style={styles.actionCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -263,6 +531,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.backgroundDark,
+  },
+  keyboardView: {
+    flex: 1,
+  },
+  messages: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -288,6 +562,12 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     flex: 1,
+  },
+  headerProfile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: SPACING.sm,
   },
   headerName: {
     fontSize: FONT_SIZES.md,
@@ -478,5 +758,59 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.xs,
     color: COLORS.primary,
     marginTop: 2,
+  },
+  emojiOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: COLORS.overlay,
+  },
+  emojiPickerContainer: {
+    backgroundColor: COLORS.background,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+  },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  emojiItem: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: SPACING.xs,
+  },
+  emojiItemText: {
+    fontSize: 24,
+  },
+  actionsOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: COLORS.overlay,
+  },
+  actionsContainer: {
+    backgroundColor: COLORS.background,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    borderTopLeftRadius: BORDER_RADIUS.xl,
+    borderTopRightRadius: BORDER_RADIUS.xl,
+  },
+  actionItem: {
+    paddingVertical: SPACING.md,
+  },
+  actionText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.text,
+  },
+  actionDestructiveText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.error,
+  },
+  actionCancelText: {
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
   },
 });

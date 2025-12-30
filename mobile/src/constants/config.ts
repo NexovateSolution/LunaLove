@@ -1,8 +1,8 @@
 export const API_CONFIG = {
-  BASE_URL: __DEV__ ? 'http://10.86.208.86:8000/api' : 'https://api.lunalove.app/api',
-  WS_URL: __DEV__ ? 'ws://10.86.208.86:8000/ws' : 'wss://api.lunalove.app/ws',
-  // BASE_URL: __DEV__ ? 'http://192.168.1.6:8000/api' : 'https://api.lunalove.app/api',
-  // WS_URL: __DEV__ ? 'ws://192.168.1.6:8000/ws' : 'wss://api.lunalove.app/ws',
+  // BASE_URL: __DEV__ ? 'http://10.86.208.86:8000/api' : 'https://api.lunalove.app/api',
+  // WS_URL: __DEV__ ? 'ws://10.86.208.86:8000/ws' : 'wss://api.lunalove.app/ws',
+  BASE_URL: __DEV__ ? 'http://192.168.1.5:8000/api' : 'https://api.lunalove.app/api',
+  WS_URL: __DEV__ ? 'ws://192.168.1.5:8000/ws' : 'wss://api.lunalove.app/ws',
   // Computer IP from ipconfig: 172.16.99.22
   // BASE_URL: __DEV__ ? 'http://172.16.99.22:8000/api' : 'https://api.lunalove.app/api',
   // WS_URL: __DEV__ ? 'ws://172.16.99.22:8000/ws' : 'wss://api.lunalove.app/ws',

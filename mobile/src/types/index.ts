@@ -25,6 +25,8 @@ export interface User {
   boost_expiry: string | null;
   likes_reveal_expiry: string | null;
   ad_free_expiry: string | null;
+  is_online?: boolean;
+  last_seen?: string;
 }
 
 export interface UserPhoto {

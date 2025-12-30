@@ -27,12 +27,7 @@ export default function MainNavigator() {
         name="Chat" 
         component={ChatScreen}
         options={{
-          headerShown: true,
-          headerBackTitleVisible: false,
-          headerStyle: {
-            backgroundColor: COLORS.background,
-          },
-          headerTintColor: COLORS.text,
+          headerShown: false,
         }}
       />
       <Stack.Screen 

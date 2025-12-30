@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,12 @@ import Animated, {
   Extrapolate,
   runOnJS,
 } from 'react-native-reanimated';
-import { PanGestureHandler, PanGestureHandlerGestureEvent } from 'react-native-gesture-handler';
+import {
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  PanGestureHandlerStateChangeEvent,
+  State as GestureState,
+} from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import SafeImage from '../common/SafeImage';
 import { PotentialMatch } from '../../types';
@@ -50,19 +55,41 @@ export default function SwipeCardNew({
   const currentPhoto = photos[currentPhotoIndex]?.photo || '';
   const age = profile.date_of_birth ? calculateAge(profile.date_of_birth) : '';
 
-  const gestureHandler = (event: PanGestureHandlerGestureEvent) => {
-    'worklet';
-    if (!isTop) return;
+  // Reset card position whenever we get a new profile or the card becomes the top card
+  useEffect(() => {
+    translateX.value = 0;
+    translateY.value = 0;
+  }, [profile.id, isTop]);
 
+  const onGestureEvent = (event: PanGestureHandlerGestureEvent) => {
+    if (!isTop) return;
     translateX.value = event.nativeEvent.translationX;
     translateY.value = event.nativeEvent.translationY;
+  };
 
-    if (event.nativeEvent.state === 5) { // End state
-      if (Math.abs(translateX.value) > SWIPE_THRESHOLD) {
-        const direction = translateX.value > 0 ? 1 : -1;
-        translateX.value = withSpring(direction * SCREEN_WIDTH * 1.5, {}, () => {
-          runOnJS(direction > 0 ? onSwipeRight : onSwipeLeft)();
-        });
+  const onHandlerStateChange = (event: PanGestureHandlerStateChangeEvent) => {
+    if (!isTop) return;
+
+    const { state, translationX } = event.nativeEvent;
+
+    if (
+      state === GestureState.END ||
+      state === GestureState.CANCELLED ||
+      state === GestureState.FAILED
+    ) {
+      const absX = Math.abs(translationX);
+      const shouldDismiss = absX > SWIPE_THRESHOLD;
+
+      if (shouldDismiss) {
+        const direction = translationX > 0 ? 1 : -1;
+        // Animate the card off-screen for visual feedback
+        translateX.value = withSpring(direction * SCREEN_WIDTH * 1.5);
+        // Immediately trigger the corresponding swipe action on JS side
+        if (direction > 0) {
+          onSwipeRight();
+        } else {
+          onSwipeLeft();
+        }
       } else {
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
@@ -122,7 +149,7 @@ export default function SwipeCardNew({
   }
 
   return (
-    <PanGestureHandler onGestureEvent={gestureHandler}>
+    <PanGestureHandler onGestureEvent={onGestureEvent} onHandlerStateChange={onHandlerStateChange}>
       <Animated.View style={[styles.card, cardStyle]}>
         {/* Main Photo */}
         <SafeImage uri={currentPhoto} style={styles.photo} />
